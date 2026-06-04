@@ -1,0 +1,17 @@
+# Commerce Lab — local stack.
+# Phase 0: just order-service. Each later phase adds services here
+# (Postgres in Phase 2, Kafka/Redpanda in Phase 4, observability in Phase 5).
+services:
+  order-service:
+    build: ./order-service
+    image: commerce-lab/order-service:0.0.1
+    container_name: order-service
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped

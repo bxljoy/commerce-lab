@@ -1,0 +1,28 @@
+spring:
+  application:
+    name: order-service
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Phase 0: just enough to prove the service is alive and observable.
+        # Phase 5 expands this (Prometheus, tracing) — keep the surface small until then.
+        include: health,info,metrics
+  endpoint:
+    health:
+      # Expose liveness/readiness groups so a container orchestrator can probe them.
+      probes:
+        enabled: true
+      show-details: always
+  info:
+    env:
+      enabled: true
+
+info:
+  app:
+    name: ${spring.application.name}
+    phase: "0 - rails"
