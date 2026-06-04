@@ -44,21 +44,39 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
+
+            <!--
+              Make the Byte Buddy agent's jar path available as a build property
+              (${net.bytebuddy:byte-buddy-agent:jar}) so Surefire can pre-load it.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>resolve-agent-paths</id>
+                        <goals>
+                            <goal>properties</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+              Load Mockito's Byte Buddy agent at JVM startup instead of letting Mockito
+              self-attach it at runtime. Self-attach needs an OS capability that sandboxed/
+              container runtimes and some CI revoke, where it fails hard with
+              "Could not self-attach to current VM" (Mockito's inline mock maker AND its
+              module MemberAccessor both self-attach, so switching the mock maker alone
+              isn't enough). A startup -javaagent sidesteps self-attach entirely, keeps the
+              inline mock maker's full power (final/static/records), and is portable across
+              environments. -Xshare:off clears the unrelated CDS warning the agent triggers.
+            -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <!--
-                  spring-boot-starter-test pulls in Mockito, whose Byte Buddy agent
-                  self-attaches at test startup (Spring registers MockitoTestExecutionListener
-                  unconditionally, even when a test uses no mocks). On JDK 21 that prints a
-                  "dynamic agent loaded" warning, and dynamic loading becomes disallowed by
-                  default in a future JDK. -XX:+EnableDynamicAgentLoading is the explicit opt-in
-                  that keeps it working past that change; -Xshare:off clears the unrelated CDS
-                  warning. We keep Mockito's inline mock maker (can mock final/records/sealed),
-                  which the lab relies on, rather than downgrading to the subclass maker.
-                -->
                 <configuration>
-                    <argLine>-XX:+EnableDynamicAgentLoading -Xshare:off</argLine>
+                    <argLine>-javaagent:${net.bytebuddy:byte-buddy-agent:jar} -Xshare:off</argLine>
                 </configuration>
             </plugin>
         </plugins>
