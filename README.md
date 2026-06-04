@@ -59,9 +59,12 @@ commerce-lab/
 │   ├── adr/                # one ADR per phase
 │   └── notes-verification.md   # checklist: which vault note each phase proves
 ├── order-service/          # Phase 0+ (Spring Boot)
-├── inventory-service/      # Phase 3
-└── frontend/               # Phase 6
+├── inventory-service/      # planned — Phase 3
+└── frontend/               # planned — Phase 6
 ```
+
+> `inventory-service/` and `frontend/` are listed for orientation; they don't exist
+> yet and are created when their phase begins.
 
 ## How this repo is meant to grow
 

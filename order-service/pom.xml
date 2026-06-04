@@ -44,6 +44,23 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <!--
+                  spring-boot-starter-test pulls in Mockito, whose Byte Buddy agent
+                  self-attaches at test startup (Spring registers MockitoTestExecutionListener
+                  unconditionally, even when a test uses no mocks). On JDK 21 that prints a
+                  "dynamic agent loaded" warning, and dynamic loading becomes disallowed by
+                  default in a future JDK. -XX:+EnableDynamicAgentLoading is the explicit opt-in
+                  that keeps it working past that change; -Xshare:off clears the unrelated CDS
+                  warning. We keep Mockito's inline mock maker (can mock final/records/sealed),
+                  which the lab relies on, rather than downgrading to the subclass maker.
+                -->
+                <configuration>
+                    <argLine>-XX:+EnableDynamicAgentLoading -Xshare:off</argLine>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 
