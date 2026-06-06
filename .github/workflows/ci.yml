@@ -1,0 +1,49 @@
+name: CI
+
+# Phase 0 CI: run the order-service test suite on every push to main and on PRs.
+# Build/image/deploy stages get added in later phases; for now this just proves
+# the tests are green on a clean Linux runner (not just on a local Mac).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel an in-flight run if a newer commit lands on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: order-service tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Temurin 21 matches the JRE the Dockerfile ships on; cache: maven keeps
+      # ~/.m2 between runs so we don't re-download dependencies every time.
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # tee so the next step can inspect the JVM output. The runner's default
+      # shell is `bash -eo pipefail`, so a test failure here still fails the step.
+      - name: Run tests
+        run: make test 2>&1 | tee test-output.log
+
+      # Guard the portability fix: if Mockito ever self-attaches the Byte Buddy
+      # agent at runtime again (e.g. the Surefire -javaagent pre-load in
+      # order-service/pom.xml gets dropped), the JVM prints the JEP 451 warning.
+      # That pattern passes here but breaks in hardened/sandboxed runtimes, so we
+      # fail the build on it rather than let it regress silently.
+      - name: Verify the Byte Buddy agent was pre-loaded
+        run: |
+          if grep -Eq "A Java agent has been loaded dynamically|Mockito is currently self-attaching" test-output.log; then
+            echo "::error::Mockito self-attached the Byte Buddy agent at runtime. The Surefire -javaagent pre-load in order-service/pom.xml is not taking effect — tests would break in hardened/sandboxed runtimes."
+            exit 1
+          fi
+          echo "OK — no dynamic agent loading detected; the agent is pre-loaded at JVM startup."
