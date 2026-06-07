@@ -1,6 +1,11 @@
 spring:
   application:
     name: order-service
+  mvc:
+    problemdetails:
+      # Return RFC-7807 application/problem+json for Spring's built-in MVC exceptions
+      # too (404 no-handler, 405, 415, ...), matching our @RestControllerAdvice.
+      enabled: true
 
 server:
   port: 8080

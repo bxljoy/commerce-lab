@@ -12,7 +12,7 @@ Legend: ⬜ not started · 🟡 in progress · ✅ verified
 | # | Goal | Status |
 |---|------|--------|
 | 0 | Rails: order-service skeleton, health, Dockerfile, compose, Makefile | 🟡 |
-| 1 | One service done right (OpenAPI-first, layered, validation, RFC-7807, unit/slice tests) | ⬜ |
+| 1 | One service done right (OpenAPI-first, layered, validation, RFC-7807, unit/slice tests) | ✅ |
 | 2 | Persistence done right (Postgres, Flyway, JPA, Testcontainers) | ⬜ |
 | 3 | Second service + sync integration (RestClient, resilience4j, contract test) | ⬜ |
 | 4 | Async — outbox + Kafka saga, idempotent consumers, DLQ | ⬜ |
@@ -26,10 +26,10 @@ Legend: ⬜ not started · 🟡 in progress · ✅ verified
 > `Obsidian-notes/tech-decisions/notes/`.
 
 ### Phase 1 — One service done right
-- ⬜ `spring-rest-controller-hygiene-validation-dtos-authz`
-- ⬜ `spring-rest-jackson-and-openapi-codegen-pattern`
-- ⬜ `java-records-sealed-and-pattern-matching`
-- ⬜ `testing-taxonomy-pyramid-contracts-e2e-and-test-design` (unit + `@WebMvcTest` slice)
+- ✅ `spring-rest-controller-hygiene-validation-dtos-authz` — `@Valid` DTO validation + RFC-7807 errors. (authz/`@AuthenticationPrincipal` deferred to Phase 7 — no auth yet)
+- ✅ `spring-rest-jackson-and-openapi-codegen-pattern` — spec-first `openapi.yaml` → generated `OrdersApi` interface + POJO DTOs; hand-written `@Controller` returning `ResponseEntity`
+- 🟡 `java-records-sealed-and-pattern-matching` — records + `Money` value object verified; sealed state hierarchy + exhaustive switch deferred to Phase 4 (event-driven transitions)
+- ✅ `testing-taxonomy-pyramid-contracts-e2e-and-test-design` — domain/service unit tests + `@WebMvcTest` controller slice (contract tier in Phase 3)
 
 ### Phase 2 — Persistence done right
 - ⬜ `jpa-entity-equals-and-hashcode`

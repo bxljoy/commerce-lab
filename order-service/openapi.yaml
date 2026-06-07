@@ -1,0 +1,146 @@
+openapi: 3.0.3
+info:
+  title: Order Service API
+  description: |
+    Owns the Order aggregate and its lifecycle. Phase 1 exposes the two
+    operations that prove the slice end-to-end: place an order and retrieve it.
+    This document is the source of truth — DTOs and the API interface are
+    generated from it at build time (openapi-generator `spring`, interfaceOnly).
+  version: 0.1.0
+
+servers:
+  - url: /
+
+tags:
+  - name: orders
+    description: Place and retrieve orders.
+
+paths:
+  /api/v1/orders:
+    post:
+      tags: [orders]
+      operationId: placeOrder
+      summary: Place a new order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaceOrderRequest'
+      responses:
+        '201':
+          description: Order placed.
+          headers:
+            Location:
+              description: Canonical URI of the created order.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          description: Request validation failed (RFC-7807 problem+json).
+
+  /api/v1/orders/{orderId}:
+    get:
+      tags: [orders]
+      operationId: getOrder
+      summary: Retrieve an order by id
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: The order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '404':
+          description: No order with that id (RFC-7807 problem+json).
+
+components:
+  schemas:
+
+    PlaceOrderRequest:
+      type: object
+      required: [customerId, currency, lines]
+      properties:
+        customerId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          example: cust-1001
+        currency:
+          type: string
+          description: ISO-4217 currency code, applied to every line.
+          pattern: '^[A-Z]{3}$'
+          example: EUR
+        lines:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/PlaceOrderLineRequest'
+
+    PlaceOrderLineRequest:
+      type: object
+      required: [sku, quantity, unitPrice]
+      properties:
+        sku:
+          type: string
+          minLength: 1
+          maxLength: 64
+          example: SKU-APPLE
+        quantity:
+          type: integer
+          format: int32
+          minimum: 1
+          example: 2
+        unitPrice:
+          type: number
+          description: Price per unit, in the order's currency.
+          minimum: 0.01
+          example: 9.99
+
+    OrderResponse:
+      type: object
+      required: [id, status, currency, lines, totalAmount, placedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [PLACED, CONFIRMED, SHIPPED, CANCELLED]
+        currency:
+          type: string
+          example: EUR
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderLineResponse'
+        totalAmount:
+          type: number
+          example: 19.98
+        placedAt:
+          type: string
+          format: date-time
+
+    OrderLineResponse:
+      type: object
+      required: [sku, quantity, unitPrice, lineTotal]
+      properties:
+        sku:
+          type: string
+        quantity:
+          type: integer
+          format: int32
+        unitPrice:
+          type: number
+        lineTotal:
+          type: number

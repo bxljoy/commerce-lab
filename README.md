@@ -11,7 +11,7 @@ and the note-by-phase mapping live in the Obsidian vault:
 
 | Service | Owns | Status |
 |---|---|---|
-| `order-service` | Order aggregate + lifecycle (`PLACED → CONFIRMED → SHIPPED / CANCELLED`) | Phase 0 skeleton |
+| `order-service` | Order aggregate + lifecycle (`PLACED → CONFIRMED → SHIPPED / CANCELLED`) | Phase 1 — place + get order (OpenAPI-first, in-memory) |
 | `inventory-service` | Stock per SKU (reserve / release) | not started (Phase 3) |
 | `frontend` | React SPA to place orders and watch them confirm | not started (Phase 6) |
 
@@ -48,6 +48,30 @@ Run `make` with no target for the full list.
 make up
 make health     # -> {"status":"UP", ...}
 ```
+
+### Verify Phase 1 — place + get an order
+
+`order-service` is OpenAPI-first: `order-service/openapi.yaml` is the source of truth,
+and the API interface + DTOs are generated from it at build time. With the service
+running (`make up`, or `cd order-service && mvn spring-boot:run`):
+
+```bash
+# place an order -> 201 Created, with a Location header
+curl -i -X POST http://localhost:8080/api/v1/orders \
+  -H 'Content-Type: application/json' \
+  -d '{"customerId":"cust-1","currency":"EUR",
+       "lines":[{"sku":"SKU-APPLE","quantity":2,"unitPrice":9.99}]}'
+
+# fetch it back -> 200
+curl http://localhost:8080/api/v1/orders/<id-from-Location>
+
+# invalid body -> 400 RFC-7807 problem+json with a per-field `errors` map
+curl -i -X POST http://localhost:8080/api/v1/orders \
+  -H 'Content-Type: application/json' -d '{"currency":"EU","lines":[]}'
+```
+
+> Phase 1 stores orders **in memory** (they don't survive a restart). Postgres + Flyway
+> persistence lands in Phase 2 behind the same `OrderRepository` interface.
 
 ## Layout
 
