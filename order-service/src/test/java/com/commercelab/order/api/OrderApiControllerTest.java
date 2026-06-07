@@ -14,7 +14,6 @@ import com.commercelab.order.domain.Order;
 import com.commercelab.order.domain.OrderLine;
 import com.commercelab.order.domain.OrderNotFoundException;
 import com.commercelab.order.service.OrderService;
-import com.commercelab.order.web.ApiExceptionHandler;
 import java.math.BigDecimal;
 import java.util.Currency;
 import java.util.List;
@@ -23,7 +22,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -32,8 +30,9 @@ import org.springframework.test.web.servlet.MockMvc;
  * repository), with {@link OrderService} mocked. Verifies the HTTP boundary — status
  * codes, Location header, JSON shape, and RFC-7807 problem responses.
  */
+// @WebMvcTest auto-includes @ControllerAdvice beans, so ApiExceptionHandler (the
+// RFC-7807 handler) is active in the slice without an explicit @Import.
 @WebMvcTest(OrderApiController.class)
-@Import(ApiExceptionHandler.class)
 class OrderApiControllerTest {
 
     @Autowired
