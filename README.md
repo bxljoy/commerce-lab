@@ -73,6 +73,23 @@ curl -i -X POST http://localhost:8080/api/v1/orders \
 > Phase 1 stores orders **in memory** (they don't survive a restart). Postgres + Flyway
 > persistence lands in Phase 2 behind the same `OrderRepository` interface.
 
+### Generated API code
+
+The API interface and DTOs are generated from `order-service/openapi.yaml` into
+`order-service/target/generated-sources/openapi` at build time and are **not committed**.
+The Maven plugin adds that directory to the compile source roots, so the generated
+`...generated.api` / `...generated.model` types import like any other class — but only
+**after** a build has run. Regeneration never appears in a git diff; the reviewable
+artifact is `openapi.yaml` itself.
+
+```bash
+# after a fresh clone, run once so the IDE can resolve the generated types:
+mvn -f order-service/pom.xml compile
+```
+
+CI (`make test`) and the Docker build regenerate automatically — never copy or hand-edit
+generated code.
+
 ## Layout
 
 ```
