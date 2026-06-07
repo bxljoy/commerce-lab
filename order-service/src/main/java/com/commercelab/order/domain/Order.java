@@ -31,6 +31,9 @@ public record Order(
             throw new IllegalArgumentException("an order must have at least one line");
         }
         lines = List.copyOf(lines); // defensive copy — see class javadoc
+        if (lines.stream().map(line -> line.unitPrice().currency()).distinct().count() > 1) {
+            throw new IllegalArgumentException("all order lines must share one currency");
+        }
         placedAt = Objects.requireNonNull(placedAt, "placedAt");
     }
 

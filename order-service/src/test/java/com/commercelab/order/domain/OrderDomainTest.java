@@ -61,6 +61,14 @@ class OrderDomainTest {
     }
 
     @Test
+    void orderRejectsMixedCurrencyLines() {
+        assertThatThrownBy(() -> Order.place("cust-1", List.of(
+                new OrderLine("SKU-1", 1, new Money(BigDecimal.ONE, EUR)),
+                new OrderLine("SKU-2", 1, new Money(BigDecimal.ONE, Currency.getInstance("USD"))))))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void orderDefensivelyCopiesLines() {
         List<OrderLine> lines = new ArrayList<>();
         lines.add(new OrderLine("SKU-1", 1, new Money(BigDecimal.ONE, EUR)));

@@ -40,7 +40,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/OrderResponse'
         '400':
-          description: Request validation failed (RFC-7807 problem+json).
+          description: Request validation failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
 
   /api/v1/orders/{orderId}:
     get:
@@ -62,7 +66,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/OrderResponse'
         '404':
-          description: No order with that id (RFC-7807 problem+json).
+          description: No order with that id.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
 
 components:
   schemas:
@@ -144,3 +152,34 @@ components:
           type: number
         lineTotal:
           type: number
+
+    ProblemDetail:
+      type: object
+      description: RFC-7807 / RFC-9457 problem detail, returned as application/problem+json.
+      properties:
+        type:
+          type: string
+          format: uri
+          example: https://commerce-lab/errors/validation
+        title:
+          type: string
+          example: Validation failed
+        status:
+          type: integer
+          format: int32
+          example: 400
+        detail:
+          type: string
+          example: Request validation failed
+        instance:
+          type: string
+          format: uri
+          example: /api/v1/orders
+        errors:
+          type: object
+          description: Present on validation failures — a map of field name to message.
+          additionalProperties:
+            type: string
+          example:
+            customerId: must not be null
+            currency: invalid format
