@@ -11,7 +11,7 @@ Legend: ⬜ not started · 🟡 in progress · ✅ verified
 
 | # | Goal | Status |
 |---|------|--------|
-| 0 | Rails: order-service skeleton, health, Dockerfile, compose, Makefile | 🟡 |
+| 0 | Rails: order-service skeleton, health, Dockerfile, compose, Makefile | ✅ |
 | 1 | One service done right (OpenAPI-first, layered, validation, RFC-7807, unit/slice tests) | ✅ |
 | 2 | Persistence done right (Postgres, Flyway, JPA, Testcontainers) | ⬜ |
 | 3 | Second service + sync integration (RestClient, resilience4j, contract test) | ⬜ |

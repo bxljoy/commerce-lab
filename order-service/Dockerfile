@@ -10,6 +10,9 @@ WORKDIR /build
 COPY pom.xml .
 RUN mvn -B -q dependency:go-offline
 
+# openapi.yaml is the source of truth — the build generates the API interface + DTOs
+# from it, so it must be present before `package`.
+COPY openapi.yaml .
 COPY src ./src
 RUN mvn -B -q clean package -DskipTests
 
