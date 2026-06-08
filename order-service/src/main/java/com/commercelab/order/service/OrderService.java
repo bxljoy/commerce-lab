@@ -9,6 +9,7 @@ import java.util.Currency;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Order application service — orchestrates the domain and the repository. Works purely
@@ -25,6 +26,7 @@ public class OrderService {
     }
 
     /** Build the order aggregate, persist it, and return it (status PLACED). */
+    @Transactional
     public Order placeOrder(PlaceOrderCommand command) {
         Currency currency = Currency.getInstance(command.currencyCode()); // IllegalArgumentException on bad code → 400
         List<OrderLine> lines = command.lines().stream()
@@ -34,6 +36,7 @@ public class OrderService {
     }
 
     /** Retrieve an order or throw {@link OrderNotFoundException} (→ 404). */
+    @Transactional(readOnly = true)
     public Order getOrder(UUID id) {
         return repository.findById(id)
                 .orElseThrow(() -> new OrderNotFoundException(id));

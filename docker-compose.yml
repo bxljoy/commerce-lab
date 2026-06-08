@@ -1,17 +1,47 @@
 # Commerce Lab — local stack.
-# Phase 0: just order-service. Each later phase adds services here
-# (Postgres in Phase 2, Kafka/Redpanda in Phase 4, observability in Phase 5).
+# Phase 0: order-service. Phase 2 adds Postgres (order-service's own database).
+# Later phases add Kafka/Redpanda (Phase 4) and observability (Phase 5).
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: order-postgres
+    environment:
+      POSTGRES_DB: orderdb
+      POSTGRES_USER: order
+      POSTGRES_PASSWORD: order
+    ports:
+      - "5432:5432"
+    volumes:
+      # Named volume → orders survive `docker compose down` + restart.
+      - order-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U order -d orderdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   order-service:
     build: ./order-service
     image: commerce-lab/order-service:0.0.1
     container_name: order-service
     ports:
       - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orderdb
+      SPRING_DATASOURCE_USERNAME: order
+      SPRING_DATASOURCE_PASSWORD: order
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
       interval: 10s
       timeout: 3s
       retries: 5
-      start_period: 30s
+      # Allow for Flyway migration + JPA validation on a cold start.
+      start_period: 40s
     restart: unless-stopped
+
+volumes:
+  order-pgdata:

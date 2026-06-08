@@ -31,7 +31,8 @@ and the note-by-phase mapping live in the Obsidian vault:
 ## Quick start
 
 ```bash
-make test     # run tests locally (no Docker needed)
+make test     # unit + slice tests (Surefire; fast, no Docker)
+make verify   # all tests incl. Testcontainers integration tests (Failsafe; needs Docker)
 make build    # build the order-service jar locally
 make up       # build images and start the stack (needs Docker running)
 make health   # curl the order-service health endpoint
@@ -41,6 +42,15 @@ make down     # stop the stack
 ```
 
 Run `make` with no target for the full list.
+
+> **Integration tests & Docker (local note):** `make verify` runs Testcontainers-backed
+> integration tests (`*IT`) against a throwaway Postgres, so it needs a Docker daemon.
+> The build pins `-Dapi.version` for the test JVM because docker-java's negotiation probes
+> Docker API v1.32, which modern daemons (Docker Engine 25+, OrbStack, Colima) reject. If
+> Testcontainers can't find your daemon's socket (e.g. OrbStack/Colima don't expose
+> `/var/run/docker.sock`), point it there in `~/.testcontainers.properties`:
+> `docker.host=unix:///Users/<you>/.orbstack/run/docker.sock`. On standard Docker / CI this
+> isn't needed.
 
 ### Verify Phase 0
 
@@ -70,8 +80,21 @@ curl -i -X POST http://localhost:8080/api/v1/orders \
   -H 'Content-Type: application/json' -d '{"currency":"EU","lines":[]}'
 ```
 
-> Phase 1 stores orders **in memory** (they don't survive a restart). Postgres + Flyway
-> persistence lands in Phase 2 behind the same `OrderRepository` interface.
+### Verify Phase 2 — orders persist (Postgres + Flyway, survive a restart)
+
+As of Phase 2, orders are stored in **Postgres** (Flyway-migrated schema, JPA with
+`open-in-view: false` and `ddl-auto: validate`) behind the same `OrderRepository`
+interface — the service and controller didn't change. To see an order survive a restart:
+
+```bash
+make up                                  # starts postgres + order-service
+# place an order (see Phase 1), note the id, then:
+docker compose restart order-service
+curl http://localhost:8080/api/v1/orders/<id>   # still 200 — data survived (named volume)
+```
+
+The automated proof is the Testcontainers suite (`make verify`): an order round-trips
+through a real Postgres, and a lazy-init test demonstrates the OSIV-off handling.
 
 ### Generated API code
 
@@ -87,7 +110,7 @@ artifact is `openapi.yaml` itself.
 mvn -f order-service/pom.xml compile
 ```
 
-CI (`make test`) and the Docker build regenerate automatically — never copy or hand-edit
+CI (`make verify`) and the Docker build regenerate automatically — never copy or hand-edit
 generated code.
 
 ## Layout

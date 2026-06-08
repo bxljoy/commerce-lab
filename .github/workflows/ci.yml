@@ -1,8 +1,8 @@
 name: CI
 
-# Phase 0 CI: run the order-service test suite on every push to main and on PRs.
-# Build/image/deploy stages get added in later phases; for now this just proves
-# the tests are green on a clean Linux runner (not just on a local Mac).
+# CI: run the order-service test suite on every push to main and on PRs — unit +
+# slice (Surefire) plus Testcontainers integration tests (Failsafe) on a clean Linux
+# runner. Image/deploy stages get added in later phases.
 on:
   push:
     branches: [main]
@@ -30,10 +30,12 @@ jobs:
           java-version: '21'
           cache: maven
 
-      # tee so the next step can inspect the JVM output. The runner's default
-      # shell is `bash -eo pipefail`, so a test failure here still fails the step.
-      - name: Run tests
-        run: make test 2>&1 | tee test-output.log
+      # `make verify` runs Surefire (unit + slice) AND Failsafe (Testcontainers
+      # integration tests). GitHub-hosted runners have Docker, so Testcontainers
+      # spins up Postgres. tee so the next step can inspect the JVM output; the
+      # runner's default shell is `bash -eo pipefail`, so a failure still fails the step.
+      - name: Run tests (unit + slice + Testcontainers integration)
+        run: make verify 2>&1 | tee test-output.log
 
       # Guard the portability fix: if Mockito ever self-attaches the Byte Buddy
       # agent at runtime again (e.g. the Surefire -javaagent pre-load in

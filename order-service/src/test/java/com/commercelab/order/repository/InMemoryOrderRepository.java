@@ -5,13 +5,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import org.springframework.stereotype.Repository;
 
 /**
- * In-memory {@link OrderRepository} for Phase 1 — a thread-safe map, no persistence.
- * Orders do not survive a restart; Phase 2 replaces this with Postgres + JPA.
+ * In-memory {@link OrderRepository} fake for fast, Spring-free unit tests
+ * (e.g. {@code OrderServiceTest}). Production uses the JPA-backed adapter; this lives in
+ * test sources only so it is never wired as a bean.
  */
-@Repository
 public class InMemoryOrderRepository implements OrderRepository {
 
     private final Map<UUID, Order> store = new ConcurrentHashMap<>();

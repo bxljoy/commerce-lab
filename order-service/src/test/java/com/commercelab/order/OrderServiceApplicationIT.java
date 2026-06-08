@@ -9,15 +9,14 @@ import org.springframework.boot.actuate.health.Status;
 import org.springframework.boot.test.context.SpringBootTest;
 
 /**
- * Phase 0 smoke test.
- *
- * <p>{@code contextLoads} proves the Spring context wires up; {@code healthIsUp}
- * proves the Actuator health endpoint reports UP without any external dependency
- * (there is no database yet in Phase 0). Richer unit tests arrive in Phase 1 once
- * there is domain logic worth testing in isolation.
+ * Application smoke integration test. {@code contextLoads} proves the full Spring
+ * context wires up against a real Postgres (Testcontainers) — which also exercises
+ * Flyway migration and Hibernate {@code ddl-auto=validate}; {@code healthIsUp} proves
+ * the Actuator health endpoint (now including the DB indicator) reports UP. Runs under
+ * Failsafe as an {@code *IT} because it needs Docker.
  */
 @SpringBootTest
-class OrderServiceApplicationTests {
+class OrderServiceApplicationIT extends AbstractPostgresIntegrationTest {
 
     @Autowired
     private HealthEndpoint healthEndpoint;

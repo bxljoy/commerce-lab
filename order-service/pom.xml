@@ -19,6 +19,13 @@
 
     <properties>
         <java.version>21</java.version>
+        <!--
+          Override Spring Boot 3.3.5's managed Testcontainers (1.19.x): its bundled
+          docker-java pins Docker API 1.32 and doesn't negotiate, which modern daemons
+          (Docker 25+, OrbStack) reject with "client version 1.32 is too old". 1.20.x
+          negotiates the API version against the daemon. CI-safe — strictly newer.
+        -->
+        <testcontainers.version>1.20.4</testcontainers.version>
     </properties>
 
     <dependencies>
@@ -34,10 +41,42 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -125,6 +164,30 @@
                 <configuration>
                     <argLine>-javaagent:${net.bytebuddy:byte-buddy-agent:jar} -Xshare:off</argLine>
                 </configuration>
+            </plugin>
+
+            <!--
+              Integration tests (*IT) run under Failsafe in the `verify` phase: full
+              @SpringBootTest slices backed by a real Postgres via Testcontainers. Same
+              Byte Buddy pre-load as Surefire, plus -Dapi.version: docker-java's negotiation
+              probes Docker API v1.32, which modern daemons (Engine 25+, OrbStack, Colima)
+              reject ("client version 1.32 is too old, minimum 1.40"); pinning api.version
+              skips the failing negotiation.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <argLine>-javaagent:${net.bytebuddy:byte-buddy-agent:jar} -Xshare:off -Dapi.version=1.44</argLine>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

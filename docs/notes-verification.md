@@ -13,7 +13,7 @@ Legend: ⬜ not started · 🟡 in progress · ✅ verified
 |---|------|--------|
 | 0 | Rails: order-service skeleton, health, Dockerfile, compose, Makefile | ✅ |
 | 1 | One service done right (OpenAPI-first, layered, validation, RFC-7807, unit/slice tests) | ✅ |
-| 2 | Persistence done right (Postgres, Flyway, JPA, Testcontainers) | ⬜ |
+| 2 | Persistence done right (Postgres, Flyway, JPA, Testcontainers) | ✅ |
 | 3 | Second service + sync integration (RestClient, resilience4j, contract test) | ⬜ |
 | 4 | Async — outbox + Kafka saga, idempotent consumers, DLQ | ⬜ |
 | 5 | Observability — logs/metrics/traces across the system | ⬜ |
@@ -32,12 +32,12 @@ Legend: ⬜ not started · 🟡 in progress · ✅ verified
 - ✅ `testing-taxonomy-pyramid-contracts-e2e-and-test-design` — domain/service unit tests + `@WebMvcTest` controller slice (contract tier in Phase 3)
 
 ### Phase 2 — Persistence done right
-- ⬜ `jpa-entity-equals-and-hashcode`
-- ⬜ `osiv-session-vs-transaction-and-phantom-write`
-- ⬜ `jpa-fetching-projections-and-lazy-initialization`
-- ⬜ `database-isolation-levels-mvcc-and-anomalies`
-- ⬜ `postgres-write-performance-batching-and-idempotency`
-- ⬜ `spring-transactional-propagation-savepoints-and-self-invocation`
+- ✅ `jpa-entity-equals-and-hashcode` — UUID `@Id` assigned in the domain (no `@GeneratedValue`), no equals/hashCode override, `List` not `Set` for lines → HashSet trap avoided
+- ✅ `osiv-session-vs-transaction-and-phantom-write` — `open-in-view: false`; entity→domain mapping inside the tx; service returns records; lazy-init IT proves the session closes
+- ✅ `jpa-fetching-projections-and-lazy-initialization` — `@ManyToOne` LAZY, explicit `@EntityGraph` join-fetch on read; `default_batch_fetch_size` set
+- ✅ `spring-transactional-propagation-savepoints-and-self-invocation` — `@Transactional` on the service (write) / `readOnly=true` (read); propagation/savepoint/self-invocation nuances revisited when needed
+- 🟡 `postgres-write-performance-batching-and-idempotency` — `jdbc.batch_size` configured; idempotency keys land in Phase 3/4
+- ⬜ `database-isolation-levels-mvcc-and-anomalies` — needs concurrent writers; deferred to Phase 4 (saga/idempotency)
 
 ### Phase 3 — Second service + sync integration
 - ⬜ `restclient-http-timeouts-and-connection-pooling`

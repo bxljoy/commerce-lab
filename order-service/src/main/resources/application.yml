@@ -6,6 +6,21 @@ spring:
       # Return RFC-7807 application/problem+json for Spring's built-in MVC exceptions
       # too (404 no-handler, 405, 415, ...), matching our @RestControllerAdvice.
       enabled: true
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/orderdb}
+    username: ${SPRING_DATASOURCE_USERNAME:order}
+    password: ${SPRING_DATASOURCE_PASSWORD:order}
+  jpa:
+    open-in-view: false              # explicit: no Hibernate Session held across the HTTP request
+    hibernate:
+      ddl-auto: validate             # Flyway owns the schema; Hibernate only validates against it
+    properties:
+      hibernate:
+        default_batch_fetch_size: 50 # read-side: bound accidental N+1 on lazy associations
+        jdbc:
+          batch_size: 50             # write-side: collapse saveAll round-trips
+  flyway:
+    enabled: true                    # runs db/migration/V*.sql on startup, before JPA validation
 
 server:
   port: 8080
@@ -30,4 +45,4 @@ management:
 info:
   app:
     name: ${spring.application.name}
-    phase: "0 - rails"
+    phase: "2 - persistence"

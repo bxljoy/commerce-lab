@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.commercelab.order.AbstractPostgresIntegrationTest;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,13 +18,13 @@ import org.springframework.test.web.servlet.MvcResult;
 
 /**
  * Full-stack vertical slice with <em>real</em> beans wired by Spring
- * (controller → service → in-memory repository). Unlike the {@code @WebMvcTest} slice,
- * which mocks {@code OrderService}, this locks in the Phase 1 demo path end-to-end
- * in-process: place an order, then retrieve the same order back.
+ * (controller → service → JPA repository → Postgres via Testcontainers). Unlike the
+ * {@code @WebMvcTest} slice, which mocks {@code OrderService}, this locks in the demo
+ * path end-to-end: place an order over HTTP, then retrieve the same order back.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
-class OrderApiIntegrationTest {
+class OrderApiIT extends AbstractPostgresIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;

@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 SERVICE_DIR := order-service
 
-.PHONY: help build test up down logs ps health clean
+.PHONY: help build test verify up down logs ps health clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -10,8 +10,11 @@ help: ## Show this help
 build: ## Build the order-service jar locally (mvn package)
 	mvn -f $(SERVICE_DIR)/pom.xml -B clean package
 
-test: ## Run unit/slice tests locally (mvn test)
+test: ## Run unit + slice tests (Surefire; fast, no Docker)
 	mvn -f $(SERVICE_DIR)/pom.xml -B test
+
+verify: ## Run all tests incl. Testcontainers integration tests (Failsafe; needs Docker)
+	mvn -f $(SERVICE_DIR)/pom.xml -B verify
 
 up: ## Build images and start the stack (detached)
 	docker compose up --build -d
