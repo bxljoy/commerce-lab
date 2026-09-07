@@ -7,6 +7,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.actuate.health.HealthEndpoint;
 import org.springframework.boot.actuate.health.Status;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
+import org.springframework.core.env.Environment;
 
 /**
  * Application smoke integration test. {@code contextLoads} proves the full Spring
@@ -21,6 +23,12 @@ class OrderServiceApplicationIT extends AbstractPostgresIntegrationTest {
     @Autowired
     private HealthEndpoint healthEndpoint;
 
+    @Autowired
+    private Environment environment;
+
+    @Autowired
+    private ApplicationContext applicationContext;
+
     @Test
     void contextLoads() {
         assertThat(healthEndpoint).isNotNull();
@@ -29,5 +37,11 @@ class OrderServiceApplicationIT extends AbstractPostgresIntegrationTest {
     @Test
     void healthIsUp() {
         assertThat(healthEndpoint.health().getStatus()).isEqualTo(Status.UP);
+    }
+
+    @Test
+    void openEntityManagerInViewRemainsDisabled() {
+        assertThat(environment.getProperty("spring.jpa.open-in-view", Boolean.class)).isFalse();
+        assertThat(applicationContext.containsBean("openEntityManagerInViewInterceptor")).isFalse();
     }
 }

@@ -10,6 +10,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
+import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -49,6 +50,7 @@ public class OrderEntity {
     private Instant placedAt;
 
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("position ASC")
     private List<OrderLineEntity> lines = new ArrayList<>();
 
     protected OrderEntity() {
@@ -62,8 +64,8 @@ public class OrderEntity {
         entity.status = order.status();
         entity.currency = order.currency().getCurrencyCode();
         entity.placedAt = order.placedAt();
-        for (OrderLine line : order.lines()) {
-            entity.lines.add(OrderLineEntity.fromDomain(line, entity));
+        for (int position = 0; position < order.lines().size(); position++) {
+            entity.lines.add(OrderLineEntity.fromDomain(order.lines().get(position), entity, position));
         }
         return entity;
     }

@@ -16,7 +16,7 @@ public class InMemoryOrderRepository implements OrderRepository {
     private final Map<UUID, Order> store = new ConcurrentHashMap<>();
 
     @Override
-    public Order save(Order order) {
+    public Order add(Order order) {
         store.put(order.id(), order);
         return order;
     }

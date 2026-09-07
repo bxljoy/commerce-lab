@@ -2,6 +2,7 @@ package com.commercelab.order.persistence;
 
 import com.commercelab.order.domain.Order;
 import com.commercelab.order.repository.OrderRepository;
+import jakarta.persistence.EntityManager;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Repository;
@@ -18,15 +19,17 @@ import org.springframework.transaction.annotation.Transactional;
 public class JpaOrderRepository implements OrderRepository {
 
     private final OrderJpaRepository jpa;
+    private final EntityManager entityManager;
 
-    public JpaOrderRepository(OrderJpaRepository jpa) {
+    public JpaOrderRepository(OrderJpaRepository jpa, EntityManager entityManager) {
         this.jpa = jpa;
+        this.entityManager = entityManager;
     }
 
     @Override
     @Transactional
-    public Order save(Order order) {
-        jpa.save(OrderEntity.fromDomain(order));
+    public Order add(Order order) {
+        entityManager.persist(OrderEntity.fromDomain(order));
         return order;
     }
 

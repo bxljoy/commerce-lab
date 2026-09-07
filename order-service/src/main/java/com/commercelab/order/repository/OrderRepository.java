@@ -11,7 +11,8 @@ import java.util.UUID;
  */
 public interface OrderRepository {
 
-    Order save(Order order);
+    /** Insert a newly placed order. Updating an existing aggregate is a separate operation. */
+    Order add(Order order);
 
     Optional<Order> findById(UUID id);
 }

@@ -44,6 +44,30 @@ class OrderDomainTest {
     }
 
     @Test
+    void orderLineRejectsUnsupportedUnitPricePrecision() {
+        assertThatThrownBy(() -> new OrderLine(
+                        "SKU-1", 1, new Money(new BigDecimal("9.99999"), EUR)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("at most 4 fractional digits");
+    }
+
+    @Test
+    void orderLineRejectsUnitPriceOutsideStorageRange() {
+        assertThatThrownBy(() -> new OrderLine(
+                        "SKU-1", 1, new Money(new BigDecimal("1000000000000000"), EUR)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("exceeds supported maximum");
+    }
+
+    @Test
+    void orderLineAcceptsFourFractionalDigitsAtStorageBoundary() {
+        OrderLine line = new OrderLine(
+                "SKU-1", 1, new Money(OrderLine.MAX_UNIT_PRICE, EUR));
+
+        assertThat(line.unitPrice().amount()).isEqualByComparingTo("999999999999999.9999");
+    }
+
+    @Test
     void orderTotalSumsLineTotals() {
         Order order = Order.place("cust-1", List.of(
                 new OrderLine("SKU-1", 2, new Money(new BigDecimal("9.99"), EUR)),    // 19.98

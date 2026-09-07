@@ -42,17 +42,21 @@ public class OrderLineEntity {
     @Column(name = "unit_price", nullable = false, precision = 19, scale = 4)
     private BigDecimal unitPrice;
 
+    @Column(name = "line_position", nullable = false)
+    private int position;
+
     protected OrderLineEntity() {
         // for JPA
     }
 
-    static OrderLineEntity fromDomain(OrderLine line, OrderEntity parent) {
+    static OrderLineEntity fromDomain(OrderLine line, OrderEntity parent, int position) {
         OrderLineEntity entity = new OrderLineEntity();
         entity.id = UUID.randomUUID();
         entity.order = parent;
         entity.sku = line.sku();
         entity.quantity = line.quantity();
         entity.unitPrice = line.unitPrice().amount();
+        entity.position = position;
         return entity;
     }
 

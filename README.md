@@ -5,14 +5,18 @@ Compose** to turn best-practice theory into verified practice. The companion pla
 and the note-by-phase mapping live in the Obsidian vault:
 `Obsidian-notes/tech-decisions/notes/commerce-lab-phased-build-plan.md`.
 
-> **Guiding scenario:** *Place an order → reserve inventory → confirm (or reject) → ship.*
+> **Guiding scenario:** *Place an order → reserve inventory → confirm or reject; cancel and release stock when needed.*
+
+The core lab finishes with two services, one compensation path, recovery from
+failures, and a small observable demo. Shipping and the Phase 7 menu are optional.
+See [ADR-0004](docs/adr/0004-evidence-driven-learning-roadmap.md) for the revised scope.
 
 ## Services
 
 | Service | Owns | Status |
 |---|---|---|
-| `order-service` | Order aggregate + lifecycle (`PLACED → CONFIRMED → SHIPPED / CANCELLED`) | Phase 1 — place + get order (OpenAPI-first, in-memory) |
-| `inventory-service` | Stock per SKU (reserve / release) | not started (Phase 3) |
+| `order-service` | Order aggregate; later confirmation/rejection and cancellation | Phase 2 complete — place + get backed by Postgres |
+| `inventory-service` | Stock per SKU (reserve / release) | not started (Phase 3A) |
 | `frontend` | React SPA to place orders and watch them confirm | not started (Phase 6) |
 
 ## Tech stack
@@ -26,13 +30,14 @@ and the note-by-phase mapping live in the Obsidian vault:
 
 - JDK 21 (`java -version`)
 - Maven 3.9+ (`mvn -version`)
-- Docker + Docker Compose (Docker Desktop running)
+- Docker + Docker Compose with a running daemon (e.g. Docker Desktop or OrbStack)
 
 ## Quick start
 
 ```bash
 make test     # unit + slice tests (Surefire; fast, no Docker)
 make verify   # all tests incl. Testcontainers integration tests (Failsafe; needs Docker)
+make verify-restart # build the image and prove an order survives service restart
 make build    # build the order-service jar locally
 make up       # build images and start the stack (needs Docker running)
 make health   # curl the order-service health endpoint
@@ -63,7 +68,8 @@ make health     # -> {"status":"UP", ...}
 
 `order-service` is OpenAPI-first: `order-service/openapi.yaml` is the source of truth,
 and the API interface + DTOs are generated from it at build time. With the service
-running (`make up`, or `cd order-service && mvn spring-boot:run`):
+running (`make up`, or start Postgres with `docker compose up -d postgres` and
+then run `mvn -f order-service/pom.xml spring-boot:run`):
 
 ```bash
 # place an order -> 201 Created, with a Location header
@@ -84,17 +90,24 @@ curl -i -X POST http://localhost:8080/api/v1/orders \
 
 As of Phase 2, orders are stored in **Postgres** (Flyway-migrated schema, JPA with
 `open-in-view: false` and `ddl-auto: validate`) behind the same `OrderRepository`
-interface — the service and controller didn't change. To see an order survive a restart:
+interface. The controller mapping stayed stable; the service gained transaction
+boundaries. To see an order survive a restart:
 
 ```bash
 make up                                  # starts postgres + order-service
 # place an order (see Phase 1), note the id, then:
 docker compose restart order-service
-curl http://localhost:8080/api/v1/orders/<id>   # still 200 — data survived (named volume)
+# wait for order-service to become healthy, then:
+curl http://localhost:8080/api/v1/orders/<id>   # still 200 — stored in Postgres
 ```
 
-The automated proof is the Testcontainers suite (`make verify`): an order round-trips
-through a real Postgres, and a lazy-init test demonstrates the OSIV-off handling.
+The Testcontainers suite (`make verify`) proves database round trips, migration from
+V1 to V2, stable line order, supported price boundaries, assigned-ID insert behavior,
+detached lazy-loading behavior, and that OSIV remains disabled. Run
+`make verify-restart` for the separate image-and-process check: it creates an order,
+restarts only `order-service`, and fetches the same value and line sequence. The named
+Postgres volume also retains data across `docker compose down` / `up` (without `-v`).
+Exact claims and limits are in the [scoreboard](docs/notes-verification.md).
 
 ### Generated API code
 
@@ -132,6 +145,21 @@ commerce-lab/
 
 ## How this repo is meant to grow
 
-Each phase is **independently demoable** and ends with: a passing test, an ADR in
-`docs/adr/`, and an update to the source note in the vault ("verified in practice —
-here's the gotcha I hit"). See `docs/notes-verification.md` for the running scoreboard.
+Each phase is **independently demoable**. Predict a failure, reproduce it, make a
+regression test pass, and explain the result and its limits without reading the
+implementation. Record the exact claim, test/command, and environment in the
+[scoreboard](docs/notes-verification.md), then update the relevant vault note.
+Write an ADR for meaningful decisions; smaller experiments need only a short note.
+
+| Next milestone | What it proves |
+|---|---|
+| Phase 3A | Inventory cannot oversell; multi-SKU reservations are atomic |
+| Phase 3B | Synchronous reservations are idempotent and recover from lost responses; network calls stay outside DB transactions |
+| Phase 4A | Committed events survive publisher failure through an outbox |
+| Phase 4B | Both services recover from duplicates, rejection, cancellation, and delayed events |
+| Phase 5 | Logs, metrics, and traces explain successful and failed orders |
+| Phase 6 | A small UI and E2E test demonstrate the completed flow |
+
+Basic correlation logging starts in Phase 3; the full dashboard stack stays in
+Phase 5. A separate weekly `playground/` exercise covers Java/concurrency topics
+without blocking service milestones. The directory is created with its first exercise.

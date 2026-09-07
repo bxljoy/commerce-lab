@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 SERVICE_DIR := order-service
 
-.PHONY: help build test verify up down logs ps health clean
+.PHONY: help build test verify verify-restart up down logs ps health clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -15,6 +15,9 @@ test: ## Run unit + slice tests (Surefire; fast, no Docker)
 
 verify: ## Run all tests incl. Testcontainers integration tests (Failsafe; needs Docker)
 	mvn -f $(SERVICE_DIR)/pom.xml -B verify
+
+verify-restart: ## Build Compose stack and prove an order survives service restart
+	bash scripts/verify-order-restart.sh
 
 up: ## Build images and start the stack (detached)
 	docker compose up --build -d

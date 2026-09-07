@@ -58,6 +58,47 @@ class OrderApiIT extends AbstractPostgresIntegrationTest {
                 .andExpect(jsonPath("$.id").value(id))
                 .andExpect(jsonPath("$.currency").value("EUR"))
                 .andExpect(jsonPath("$.totalAmount").value(23.98))
-                .andExpect(jsonPath("$.lines.length()").value(2));
+                .andExpect(jsonPath("$.lines.length()").value(2))
+                .andExpect(jsonPath("$.lines[0].sku").value("SKU-1"))
+                .andExpect(jsonPath("$.lines[1].sku").value("SKU-2"));
+    }
+
+    @Test
+    void rejectsPriceThatPostgresWouldOtherwiseRound() throws Exception {
+        String body = """
+                {
+                  "customerId": "cust-int",
+                  "currency": "EUR",
+                  "lines": [
+                    { "sku": "SKU-1", "quantity": 1, "unitPrice": 9.99999 }
+                  ]
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/orders")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.title").value("Invalid order"))
+                .andExpect(jsonPath("$.detail").value(
+                        "unitPrice supports at most 4 fractional digits, was 9.99999"));
+    }
+
+    @Test
+    void rejectsPriceOutsidePostgresNumericRange() throws Exception {
+        String body = """
+                {
+                  "customerId": "cust-int",
+                  "currency": "EUR",
+                  "lines": [
+                    { "sku": "SKU-1", "quantity": 1, "unitPrice": 1000000000000000 }
+                  ]
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/orders")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.title").value("Validation failed"))
+                .andExpect(jsonPath("$.errors['lines[0].unitPrice']").exists());
     }
 }

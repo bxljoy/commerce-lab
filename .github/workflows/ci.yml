@@ -49,3 +49,6 @@ jobs:
             exit 1
           fi
           echo "OK — no dynamic agent loading detected; the agent is pre-loaded at JVM startup."
+
+      - name: Build image and verify restart persistence
+        run: make verify-restart

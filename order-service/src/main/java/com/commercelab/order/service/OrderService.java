@@ -32,7 +32,7 @@ public class OrderService {
         List<OrderLine> lines = command.lines().stream()
                 .map(line -> new OrderLine(line.sku(), line.quantity(), new Money(line.unitPrice(), currency)))
                 .toList();
-        return repository.save(Order.place(command.customerId(), lines));
+        return repository.add(Order.place(command.customerId(), lines));
     }
 
     /** Retrieve an order or throw {@link OrderNotFoundException} (→ 404). */
