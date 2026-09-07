@@ -1,0 +1,251 @@
+openapi: 3.0.3
+info:
+  title: Inventory Service API
+  description: Owns stock availability and the reservation lifecycle.
+  version: 0.1.0
+
+servers:
+  - url: /
+
+tags:
+  - name: inventory
+    description: Reserve, retrieve, release, and inspect inventory.
+
+paths:
+  /api/v1/reservations:
+    post:
+      tags: [inventory]
+      operationId: reserveInventory
+      summary: Reserve stock for an order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReserveInventoryRequest'
+      responses:
+        '201':
+          description: Stock reserved
+          headers:
+            Location:
+              description: Canonical URI of the reservation.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationResponse'
+        '400':
+          $ref: '#/components/responses/InvalidReservation'
+        '409':
+          $ref: '#/components/responses/ReservationConflict'
+
+  /api/v1/reservations/{orderId}:
+    get:
+      tags: [inventory]
+      operationId: getReservation
+      summary: Retrieve a reservation by order id
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Reservation found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationResponse'
+        '404':
+          $ref: '#/components/responses/ReservationNotFound'
+
+  /api/v1/reservations/{orderId}/release:
+    put:
+      tags: [inventory]
+      operationId: releaseReservation
+      summary: Release a reservation
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Reservation released or already released
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationResponse'
+        '404':
+          $ref: '#/components/responses/ReservationNotFound'
+
+  /api/v1/stock/{sku}:
+    get:
+      tags: [inventory]
+      operationId: getStock
+      summary: Retrieve available stock for a SKU
+      parameters:
+        - $ref: '#/components/parameters/Sku'
+      responses:
+        '200':
+          description: Stock found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockResponse'
+        '404':
+          $ref: '#/components/responses/StockNotFound'
+
+components:
+  parameters:
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Sku:
+      name: sku
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+
+  responses:
+    InvalidReservation:
+      description: Invalid reservation request
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    ReservationConflict:
+      description: Stock unavailable or reservation already exists
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    ReservationNotFound:
+      description: Reservation not found
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    StockNotFound:
+      description: Stock not found
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+
+  schemas:
+    ReserveInventoryRequest:
+      type: object
+      required: [orderId, lines]
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        lines:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ReserveInventoryLineRequest'
+
+    ReserveInventoryLineRequest:
+      type: object
+      required: [sku, quantity]
+      properties:
+        sku:
+          type: string
+          minLength: 1
+          maxLength: 64
+        quantity:
+          type: integer
+          format: int32
+          minimum: 1
+
+    ReservationResponse:
+      type: object
+      required: [orderId, lines, status, createdAt]
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        lines:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ReservationLineResponse'
+        status:
+          type: string
+          enum: [RESERVED, RELEASED]
+        createdAt:
+          type: string
+          format: date-time
+        releasedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    ReservationLineResponse:
+      type: object
+      required: [sku, quantity]
+      properties:
+        sku:
+          type: string
+          minLength: 1
+          maxLength: 64
+        quantity:
+          type: integer
+          format: int32
+          minimum: 1
+
+    StockResponse:
+      type: object
+      required: [sku, availableQuantity]
+      properties:
+        sku:
+          type: string
+          minLength: 1
+          maxLength: 64
+        availableQuantity:
+          type: integer
+          format: int32
+          minimum: 0
+
+    ProblemDetail:
+      type: object
+      description: RFC-7807 / RFC-9457 problem detail returned as application/problem+json.
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+          format: int32
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri
+        errors:
+          type: object
+          additionalProperties:
+            type: string
+        unavailableSkus:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/AvailabilityDetail'
+
+    AvailabilityDetail:
+      type: object
+      required: [requested, available]
+      properties:
+        requested:
+          type: integer
+          format: int32
+          minimum: 1
+        available:
+          type: integer
+          format: int32
+          minimum: 0
