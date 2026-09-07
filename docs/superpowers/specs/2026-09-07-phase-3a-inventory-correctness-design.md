@@ -145,11 +145,14 @@ objects can also be reconstructed or called without HTTP.
 - `order_id UUID NOT NULL` referencing `inventory_reservations`
 - `sku VARCHAR(64) NOT NULL` referencing `stock`
 - `quantity INTEGER NOT NULL CHECK (quantity > 0)`
+- `line_position INTEGER NOT NULL CHECK (line_position >= 0)`
 - primary key `(order_id, sku)`
+- unique key `(order_id, line_position)`
 
 The composite primary key gives the database a second line of defense against
-duplicate SKUs. The schema does not store a separate reservation identifier because
-the approved invariant is one lifetime reservation per `orderId`.
+duplicate SKUs. The stored position preserves request/response line order. The schema
+does not store a separate reservation identifier because the approved invariant is one
+lifetime reservation per `orderId`.
 
 ## Reservation Transaction
 
@@ -216,7 +219,7 @@ Fast tests:
 
 Real-Postgres integration tests:
 
-- A reservation round-trip retains line data and state.
+- A reservation round-trip retains line data, request order, and state.
 - A request with one sufficient and one insufficient SKU changes neither stock row
   and creates no reservation.
 - Two distinct orders reserving simultaneously against the last unit produce exactly
