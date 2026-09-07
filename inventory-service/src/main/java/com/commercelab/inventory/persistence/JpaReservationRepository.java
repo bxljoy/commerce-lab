@@ -1,11 +1,13 @@
 package com.commercelab.inventory.persistence;
 
 import com.commercelab.inventory.domain.Reservation;
+import com.commercelab.inventory.domain.ReservationAlreadyExistsException;
 import com.commercelab.inventory.repository.ReservationRepository;
 import jakarta.persistence.EntityManager;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
+import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,7 +31,15 @@ public class JpaReservationRepository implements ReservationRepository {
     @Override
     @Transactional
     public void add(Reservation reservation) {
-        entityManager.persist(ReservationEntity.fromDomain(reservation));
+        try {
+            entityManager.persist(ReservationEntity.fromDomain(reservation));
+            entityManager.flush();
+        } catch (ConstraintViolationException exception) {
+            if ("inventory_reservations_pkey".equals(exception.getConstraintName())) {
+                throw new ReservationAlreadyExistsException(reservation.orderId(), exception);
+            }
+            throw exception;
+        }
     }
 
     @Override
