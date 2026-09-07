@@ -18,6 +18,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -134,6 +135,73 @@ class InventoryPersistenceIT extends AbstractPostgresIntegrationTest {
             executor.shutdownNow();
             assertThat(executor.awaitTermination(5, SECONDS)).isTrue();
         }
+    }
+
+    @Test
+    void reservationLockWaiterSeesStateCommittedBeforeItAcquiresTheLock() throws Exception {
+        UUID orderId = UUID.randomUUID();
+        Instant releasedAt = Instant.parse("2026-09-07T10:16:30Z");
+        reservationRepository.add(Reservation.reserve(orderId, List.of(
+                new ReservationLine("SKU-2", 2),
+                new ReservationLine("SKU-1", 1)), Instant.parse("2026-09-07T10:15:30Z")));
+
+        TransactionTemplate transactions = new TransactionTemplate(transactionManager);
+        CountDownLatch firstLockAcquired = new CountDownLatch(1);
+        CountDownLatch releaseFirstTransaction = new CountDownLatch(1);
+        CountDownLatch secondTransactionStarted = new CountDownLatch(1);
+        AtomicInteger secondBackendPid = new AtomicInteger();
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try {
+            Future<?> first = executor.submit(() -> transactions.executeWithoutResult(status -> {
+                reservationRepository.lockByOrderId(orderId).orElseThrow();
+                firstLockAcquired.countDown();
+                await(releaseFirstTransaction);
+                reservationRepository.markReleased(orderId, releasedAt);
+            }));
+            assertThat(firstLockAcquired.await(5, SECONDS)).isTrue();
+
+            Future<Reservation> second = executor.submit(() -> transactions.execute(status -> {
+                secondBackendPid.set(jdbcTemplate.queryForObject(
+                        "SELECT pg_backend_pid()", Integer.class));
+                secondTransactionStarted.countDown();
+                return reservationRepository.lockByOrderId(orderId).orElseThrow();
+            }));
+            assertThat(secondTransactionStarted.await(5, SECONDS)).isTrue();
+            awaitDatabaseLock(secondBackendPid.get());
+            assertThat(second.isDone()).isFalse();
+
+            releaseFirstTransaction.countDown();
+            assertThat(first.get(5, SECONDS)).isNull();
+
+            Reservation waiterSnapshot = second.get(5, SECONDS);
+            assertThat(waiterSnapshot.status()).isEqualTo(ReservationStatus.RELEASED);
+            assertThat(waiterSnapshot.releasedAt()).isEqualTo(releasedAt);
+            assertThat(waiterSnapshot.lines()).extracting(ReservationLine::sku)
+                    .containsExactly("SKU-2", "SKU-1");
+        } finally {
+            releaseFirstTransaction.countDown();
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(5, SECONDS)).isTrue();
+        }
+    }
+
+    private void awaitDatabaseLock(int backendPid) throws InterruptedException {
+        long deadline = System.nanoTime() + SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            Boolean waiting = jdbcTemplate.queryForObject("""
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM pg_stat_activity
+                        WHERE pid = ? AND wait_event_type = 'Lock'
+                    )
+                    """, Boolean.class, backendPid);
+            if (Boolean.TRUE.equals(waiting)) {
+                return;
+            }
+            Thread.sleep(10);
+        }
+        throw new AssertionError("PostgreSQL backend did not wait for the reservation lock");
     }
 
     private static void await(CountDownLatch latch) {

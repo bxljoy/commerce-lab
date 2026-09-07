@@ -16,7 +16,6 @@ interface ReservationJpaRepository extends JpaRepository<ReservationEntity, UUID
     Optional<ReservationEntity> findByOrderIdWithLines(@Param("orderId") UUID orderId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @EntityGraph(attributePaths = "lines")
     @Query("select r from ReservationEntity r where r.orderId = :orderId")
     Optional<ReservationEntity> lockByOrderId(@Param("orderId") UUID orderId);
 }
