@@ -4,14 +4,19 @@ import com.commercelab.inventory.domain.Availability;
 import com.commercelab.inventory.domain.Reservation;
 import com.commercelab.inventory.domain.ReservationAlreadyExistsException;
 import com.commercelab.inventory.domain.ReservationLine;
+import com.commercelab.inventory.domain.ReservationNotFoundException;
+import com.commercelab.inventory.domain.ReservationStatus;
 import com.commercelab.inventory.domain.StockItem;
+import com.commercelab.inventory.domain.StockNotFoundException;
 import com.commercelab.inventory.domain.StockUnavailableException;
 import com.commercelab.inventory.repository.ReservationRepository;
 import com.commercelab.inventory.repository.StockRepository;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
@@ -56,6 +61,42 @@ public class InventoryService {
         stocks.updateAll(updated);
         reservations.add(candidate);
         return candidate;
+    }
+
+    @Transactional
+    public Reservation release(UUID orderId) {
+        Reservation reservation = reservations.lockByOrderId(orderId)
+                .orElseThrow(() -> new ReservationNotFoundException(orderId));
+        if (reservation.status() == ReservationStatus.RELEASED) {
+            return reservation;
+        }
+
+        List<String> skus = reservation.lines().stream()
+                .map(ReservationLine::sku)
+                .sorted()
+                .toList();
+        Map<String, StockItem> locked = stocks.lockBySkus(skus).stream()
+                .collect(Collectors.toMap(StockItem::sku, Function.identity()));
+        List<StockItem> updated = reservation.lines().stream()
+                .map(line -> locked.get(line.sku()).release(line.quantity()))
+                .toList();
+        stocks.updateAll(updated);
+
+        Instant releasedAt = clock.instant();
+        reservations.markReleased(orderId, releasedAt);
+        return reservation.release(releasedAt);
+    }
+
+    @Transactional(readOnly = true)
+    public Reservation getReservation(UUID orderId) {
+        return reservations.findByOrderId(orderId)
+                .orElseThrow(() -> new ReservationNotFoundException(orderId));
+    }
+
+    @Transactional(readOnly = true)
+    public StockItem getStock(String sku) {
+        return stocks.findBySku(sku)
+                .orElseThrow(() -> new StockNotFoundException(sku));
     }
 
     private static Map<String, Availability> collectUnavailable(

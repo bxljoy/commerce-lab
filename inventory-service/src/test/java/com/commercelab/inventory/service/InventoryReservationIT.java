@@ -9,6 +9,10 @@ import com.commercelab.inventory.domain.Availability;
 import com.commercelab.inventory.domain.Reservation;
 import com.commercelab.inventory.domain.ReservationAlreadyExistsException;
 import com.commercelab.inventory.domain.ReservationLine;
+import com.commercelab.inventory.domain.ReservationNotFoundException;
+import com.commercelab.inventory.domain.ReservationStatus;
+import com.commercelab.inventory.domain.StockItem;
+import com.commercelab.inventory.domain.StockNotFoundException;
 import com.commercelab.inventory.domain.StockUnavailableException;
 import com.commercelab.inventory.repository.StockRepository;
 import java.util.List;
@@ -222,6 +226,75 @@ class InventoryReservationIT extends AbstractPostgresIntegrationTest {
         assertThat(reservationCount(orderId)).isZero();
     }
 
+    @Test
+    void repeatedReleaseRestoresStockOnce() {
+        insertStock("SKU-1", 5);
+        UUID orderId = reserve("SKU-1", 2);
+
+        assertThat(service.release(orderId).status()).isEqualTo(ReservationStatus.RELEASED);
+        assertThat(service.release(orderId).status()).isEqualTo(ReservationStatus.RELEASED);
+
+        assertThat(available("SKU-1")).isEqualTo(5);
+    }
+
+    @Test
+    void concurrentReleaseRestoresStockOnce() throws Exception {
+        insertStock("SKU-1", 5);
+        UUID orderId = reserve("SKU-1", 2);
+        CyclicBarrier start = new CyclicBarrier(2);
+
+        Future<Reservation> first = submitRelease(start, orderId);
+        Future<Reservation> second = submitRelease(start, orderId);
+
+        assertThat(first.get(10, SECONDS).status()).isEqualTo(ReservationStatus.RELEASED);
+        assertThat(second.get(10, SECONDS).status()).isEqualTo(ReservationStatus.RELEASED);
+        assertThat(available("SKU-1")).isEqualTo(5);
+    }
+
+    @Test
+    void releaseUnknownReservationThrowsTypedNotFound() {
+        UUID orderId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> service.release(orderId))
+                .isInstanceOf(ReservationNotFoundException.class)
+                .hasMessageContaining(orderId.toString());
+    }
+
+    @Test
+    void retrievesReservationBeforeAndAfterRelease() {
+        insertStock("SKU-1", 5);
+        UUID orderId = reserve("SKU-1", 2);
+
+        assertThat(service.getReservation(orderId).status()).isEqualTo(ReservationStatus.RESERVED);
+
+        service.release(orderId);
+
+        assertThat(service.getReservation(orderId).status()).isEqualTo(ReservationStatus.RELEASED);
+    }
+
+    @Test
+    void retrievesStock() {
+        insertStock("SKU-1", 5);
+
+        assertThat(service.getStock("SKU-1")).isEqualTo(new StockItem("SKU-1", 5));
+    }
+
+    @Test
+    void unknownReservationReadThrowsTypedNotFound() {
+        UUID orderId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> service.getReservation(orderId))
+                .isInstanceOf(ReservationNotFoundException.class)
+                .hasMessageContaining(orderId.toString());
+    }
+
+    @Test
+    void unknownStockReadThrowsTypedNotFound() {
+        assertThatThrownBy(() -> service.getStock("SKU-UNKNOWN"))
+                .isInstanceOf(StockNotFoundException.class)
+                .hasMessageContaining("SKU-UNKNOWN");
+    }
+
     private Future<Outcome> submitReserve(
             CyclicBarrier start, UUID orderId, ReserveInventoryCommand.Line... lines) {
         return executor.submit(() -> {
@@ -235,6 +308,19 @@ class InventoryReservationIT extends AbstractPostgresIntegrationTest {
                 return Outcome.DUPLICATE;
             }
         });
+    }
+
+    private Future<Reservation> submitRelease(CyclicBarrier start, UUID orderId) {
+        return executor.submit(() -> {
+            await(start);
+            return service.release(orderId);
+        });
+    }
+
+    private UUID reserve(String sku, int quantity) {
+        UUID orderId = UUID.randomUUID();
+        service.reserve(command(orderId, line(sku, quantity)));
+        return orderId;
     }
 
     private void awaitBlockedTransactions(int expected) throws InterruptedException {
