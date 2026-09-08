@@ -1,8 +1,7 @@
 name: CI
 
-# CI: run the order-service test suite on every push to main and on PRs — unit +
-# slice (Surefire) plus Testcontainers integration tests (Failsafe) on a clean Linux
-# runner. Image/deploy stages get added in later phases.
+# CI: run both service test suites on every push to main and on PRs — unit + slice
+# (Surefire) plus Testcontainers integration tests (Failsafe) on a clean Linux runner.
 on:
   push:
     branches: [main]
@@ -15,7 +14,7 @@ concurrency:
 
 jobs:
   test:
-    name: order-service tests
+    name: commerce service tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -30,12 +29,11 @@ jobs:
           java-version: '21'
           cache: maven
 
-      # `make verify` runs Surefire (unit + slice) AND Failsafe (Testcontainers
-      # integration tests). GitHub-hosted runners have Docker, so Testcontainers
-      # spins up Postgres. tee so the next step can inspect the JVM output; the
-      # runner's default shell is `bash -eo pipefail`, so a failure still fails the step.
-      - name: Run tests (unit + slice + Testcontainers integration)
-        run: make verify 2>&1 | tee test-output.log
+      # GitHub-hosted runners have Docker, so each service's Testcontainers suite
+      # can spin up its own Postgres. tee lets the next step inspect order-service
+      # JVM output; bash -eo pipefail ensures a Maven failure still fails the step.
+      - name: Verify order-service
+        run: make verify-order 2>&1 | tee test-output.log
 
       # Guard the portability fix: if Mockito ever self-attaches the Byte Buddy
       # agent at runtime again (e.g. the Surefire -javaagent pre-load in
@@ -50,5 +48,11 @@ jobs:
           fi
           echo "OK — no dynamic agent loading detected; the agent is pre-loaded at JVM startup."
 
+      - name: Verify inventory-service
+        run: make verify-inventory
+
       - name: Build image and verify restart persistence
         run: make verify-restart
+
+      - name: Build image and verify inventory behavior
+        run: make verify-inventory-image

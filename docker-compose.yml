@@ -1,5 +1,5 @@
 # Commerce Lab — local stack.
-# Phase 0: order-service. Phase 2 adds Postgres (order-service's own database).
+# Phase 0: order-service. Phases 2 and 3A add each service's own Postgres database.
 # Later phases add Kafka/Redpanda (Phase 4) and observability (Phase 5).
 services:
   postgres:
@@ -41,5 +41,43 @@ services:
       start_period: 40s
     restart: unless-stopped
 
+  inventory-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: inventory
+      POSTGRES_USER: inventory
+      POSTGRES_PASSWORD: inventory
+    ports:
+      - "${INVENTORY_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - inventory-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inventory -d inventory"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  inventory-service:
+    build: ./inventory-service
+    image: commerce-lab/inventory-service:0.0.1
+    ports:
+      - "${INVENTORY_SERVICE_PORT:-8081}:8081"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://inventory-postgres:5432/inventory
+      SPRING_DATASOURCE_USERNAME: inventory
+      SPRING_DATASOURCE_PASSWORD: inventory
+    depends_on:
+      inventory-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/actuator/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
+
 volumes:
   order-pgdata:
+  inventory-pgdata:

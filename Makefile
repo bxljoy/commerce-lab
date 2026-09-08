@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 SERVICE_DIR := order-service
 
-.PHONY: help build test verify verify-restart up down logs ps health clean
+.PHONY: help build test test-order test-inventory verify verify-order verify-inventory verify-restart verify-inventory-image up down logs ps health clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -10,14 +10,27 @@ help: ## Show this help
 build: ## Build the order-service jar locally (mvn package)
 	mvn -f $(SERVICE_DIR)/pom.xml -B clean package
 
-test: ## Run unit + slice tests (Surefire; fast, no Docker)
-	mvn -f $(SERVICE_DIR)/pom.xml -B test
+test: test-order test-inventory ## Run both services' unit + slice tests (Surefire; fast, no Docker)
 
-verify: ## Run all tests incl. Testcontainers integration tests (Failsafe; needs Docker)
-	mvn -f $(SERVICE_DIR)/pom.xml -B verify
+test-order: ## Run order-service unit + slice tests
+	mvn -f order-service/pom.xml -B test
+
+test-inventory: ## Run inventory-service unit + slice tests
+	mvn -f inventory-service/pom.xml -B test
+
+verify: verify-order verify-inventory ## Run both services' full test suites (needs Docker)
+
+verify-order: ## Run all order-service tests including Testcontainers integration tests
+	mvn -f order-service/pom.xml -B verify
+
+verify-inventory: ## Run all inventory-service tests including Testcontainers integration tests
+	mvn -f inventory-service/pom.xml -B verify
 
 verify-restart: ## Build Compose stack and prove an order survives service restart
 	bash scripts/verify-order-restart.sh
+
+verify-inventory-image: ## Build and smoke-test the inventory-service image
+	bash scripts/verify-inventory-service.sh
 
 up: ## Build images and start the stack (detached)
 	docker compose up --build -d
