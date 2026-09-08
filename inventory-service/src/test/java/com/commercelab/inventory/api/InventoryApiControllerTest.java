@@ -105,6 +105,23 @@ class InventoryApiControllerTest {
     }
 
     @Test
+    void getReservationReturns200WithMappedFieldsAndLinesInOriginalOrder() throws Exception {
+        when(inventoryService.getReservation(ORDER_ID)).thenReturn(reserved());
+
+        mockMvc.perform(get("/api/v1/reservations/{orderId}", ORDER_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orderId").value(ORDER_ID.toString()))
+                .andExpect(jsonPath("$.status").value("RESERVED"))
+                .andExpect(jsonPath("$.createdAt").value("2026-09-07T12:00:00Z"))
+                .andExpect(jsonPath("$.releasedAt").doesNotExist())
+                .andExpect(jsonPath("$.lines.length()").value(2))
+                .andExpect(jsonPath("$.lines[0].sku").value("SKU-BANANA"))
+                .andExpect(jsonPath("$.lines[0].quantity").value(2))
+                .andExpect(jsonPath("$.lines[1].sku").value("SKU-APPLE"))
+                .andExpect(jsonPath("$.lines[1].quantity").value(1));
+    }
+
+    @Test
     void missingReservationReturnsReservationNotFoundProblem() throws Exception {
         when(inventoryService.getReservation(ORDER_ID))
                 .thenThrow(new ReservationNotFoundException(ORDER_ID));
@@ -172,6 +189,18 @@ class InventoryApiControllerTest {
         mockMvc.perform(put("/api/v1/reservations/{orderId}/release", ORDER_ID))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("RELEASED"));
+    }
+
+    @Test
+    void releaseMissingReservationReturnsReservationNotFoundProblem() throws Exception {
+        when(inventoryService.release(ORDER_ID))
+                .thenThrow(new ReservationNotFoundException(ORDER_ID));
+
+        mockMvc.perform(put("/api/v1/reservations/{orderId}/release", ORDER_ID))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.type")
+                        .value("https://commerce-lab/errors/reservation-not-found"));
     }
 
     @Test
