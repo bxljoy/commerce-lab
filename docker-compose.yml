@@ -13,6 +13,8 @@ services:
     volumes:
       # Named volume → orders survive `docker compose down` + restart.
       - order-pgdata:/var/lib/postgresql/data
+    networks:
+      - order-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U order -d orderdb"]
       interval: 5s
@@ -32,6 +34,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - order-network
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
       interval: 10s
@@ -51,6 +55,8 @@ services:
       - "${INVENTORY_POSTGRES_PORT:-5433}:5432"
     volumes:
       - inventory-pgdata:/var/lib/postgresql/data
+    networks:
+      - inventory-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U inventory -d inventory"]
       interval: 5s
@@ -70,6 +76,8 @@ services:
     depends_on:
       inventory-postgres:
         condition: service_healthy
+    networks:
+      - inventory-network
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8081/actuator/health"]
       interval: 10s
@@ -81,3 +89,7 @@ services:
 volumes:
   order-pgdata:
   inventory-pgdata:
+
+networks:
+  order-network:
+  inventory-network:

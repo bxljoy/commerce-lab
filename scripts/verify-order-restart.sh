@@ -25,7 +25,7 @@ wait_for_health() {
   return 1
 }
 
-docker compose -p "$project_name" up --build -d
+docker compose -p "$project_name" up --build -d order-service
 wait_for_health
 
 created_order="$(curl --fail-with-body -sS -X POST \

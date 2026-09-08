@@ -4,6 +4,7 @@ set -euo pipefail
 project_name="commerce-lab-inventory-test"
 service_port="18081"
 order_id="00000000-0000-0000-0000-000000000001"
+health_timeout_seconds="60"
 
 cleanup() {
   docker compose -p "$project_name" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -14,13 +15,28 @@ export INVENTORY_POSTGRES_PORT="15433"
 export INVENTORY_SERVICE_PORT="$service_port"
 
 wait_for_health() {
-  for _ in $(seq 1 60); do
-    if curl -fsS "http://localhost:${service_port}/actuator/health" >/dev/null 2>&1; then
+  local deadline=$((SECONDS + health_timeout_seconds))
+  local remaining
+  local request_timeout
+
+  while ((SECONDS < deadline)); do
+    remaining=$((deadline - SECONDS))
+    request_timeout=2
+    if ((remaining < request_timeout)); then
+      request_timeout="$remaining"
+    fi
+
+    if curl --connect-timeout 1 --max-time "$request_timeout" -fsS \
+      "http://localhost:${service_port}/actuator/health" >/dev/null 2>&1; then
       return 0
     fi
-    sleep 1
+
+    if ((deadline - SECONDS > 1)); then
+      sleep 1
+    fi
   done
 
+  echo "Inventory service did not become healthy within ${health_timeout_seconds} seconds." >&2
   docker compose -p "$project_name" ps
   docker compose -p "$project_name" logs inventory-service
   return 1
