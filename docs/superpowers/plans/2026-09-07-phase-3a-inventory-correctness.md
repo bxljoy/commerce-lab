@@ -149,7 +149,7 @@ public class InventoryServiceApplication {
 ```
 
 Configure port `8081`, datasource default
-`jdbc:postgresql://localhost:5433/inventorydb`, user/password `inventory`, OSIV false,
+`jdbc:postgresql://localhost:5433/inventory`, user/password `inventory`, OSIV false,
 `ddl-auto: validate`, Flyway enabled, and health/info/metrics actuator exposure.
 
 - [ ] **Step 3: Add the Docker build files**

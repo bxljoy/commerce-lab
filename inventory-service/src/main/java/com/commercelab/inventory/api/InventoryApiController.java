@@ -1,11 +1,13 @@
 package com.commercelab.inventory.api;
 
+import com.commercelab.inventory.domain.InvalidReservationException;
 import com.commercelab.inventory.domain.Reservation;
 import com.commercelab.inventory.domain.ReservationLine;
 import com.commercelab.inventory.domain.StockItem;
 import com.commercelab.inventory.generated.api.InventoryApi;
 import com.commercelab.inventory.generated.model.ReservationLineResponse;
 import com.commercelab.inventory.generated.model.ReservationResponse;
+import com.commercelab.inventory.generated.model.ReserveInventoryLineRequest;
 import com.commercelab.inventory.generated.model.ReserveInventoryRequest;
 import com.commercelab.inventory.generated.model.StockResponse;
 import com.commercelab.inventory.service.InventoryService;
@@ -53,9 +55,16 @@ public class InventoryApiController implements InventoryApi {
         return new ReserveInventoryCommand(
                 request.getOrderId(),
                 request.getLines().stream()
-                        .map(line -> new ReserveInventoryCommand.Line(
-                                line.getSku(), line.getQuantity()))
+                        .map(InventoryApiController::toCommandLine)
                         .toList());
+    }
+
+    private static ReserveInventoryCommand.Line toCommandLine(
+            ReserveInventoryLineRequest line) {
+        if (line == null) {
+            throw new InvalidReservationException("reservation line is required");
+        }
+        return new ReserveInventoryCommand.Line(line.getSku(), line.getQuantity());
     }
 
     private static ReservationResponse toResponse(Reservation reservation) {

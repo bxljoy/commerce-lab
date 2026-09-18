@@ -35,6 +35,9 @@ public record Reservation(
         }
         Set<String> skus = new HashSet<>();
         for (ReservationLine line : lines) {
+            if (line == null) {
+                throw new InvalidReservationException("reservation line is required");
+            }
             if (!skus.add(line.sku())) {
                 throw new InvalidReservationException("duplicate SKU: " + line.sku());
             }

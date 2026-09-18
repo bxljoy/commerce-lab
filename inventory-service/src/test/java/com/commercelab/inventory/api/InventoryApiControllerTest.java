@@ -105,6 +105,24 @@ class InventoryApiControllerTest {
     }
 
     @Test
+    void nullLineReturnsInvalidReservationProblem() throws Exception {
+        String invalidBody = """
+                {
+                  "orderId": "11111111-1111-1111-1111-111111111111",
+                  "lines": [ null ]
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/reservations")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(invalidBody))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.type")
+                        .value("https://commerce-lab/errors/invalid-reservation"));
+    }
+
+    @Test
     void getReservationReturns200WithMappedFieldsAndLinesInOriginalOrder() throws Exception {
         when(inventoryService.getReservation(ORDER_ID)).thenReturn(reserved());
 

@@ -59,6 +59,15 @@ class InventoryDomainTest {
     }
 
     @Test
+    void rejectsNullReservationLine() {
+        List<ReservationLine> lines = new ArrayList<>();
+        lines.add(null);
+
+        assertThatThrownBy(() -> Reservation.reserve(UUID.randomUUID(), lines, Instant.EPOCH))
+                .isInstanceOf(InvalidReservationException.class);
+    }
+
+    @Test
     void rejectsInvalidReservationStates() {
         UUID orderId = UUID.randomUUID();
         List<ReservationLine> lines = List.of(new ReservationLine("SKU-1", 1));
