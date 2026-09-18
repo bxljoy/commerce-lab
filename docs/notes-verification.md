@@ -194,7 +194,7 @@ retries, and uncertain-outcome recovery remain Phase 3B work.
 - ✅ `jpa-entity-equals-and-hashcode` — assigned IDs/reference equality implemented; creation explicitly uses `persist`, and statistics prove no lookup SELECT on insert
 - 🟡 `osiv-session-vs-transaction-and-phantom-write` — OSIV property and interceptor absence guarded; detached lazy loading demonstrated; phantom-write experiment remains
 - 🟡 `jpa-fetching-projections-and-lazy-initialization` — explicit fetch and domain mapping work; projections and broad query-count/N+1 experiments remain
-- 🟡 `spring-transactional-propagation-savepoints-and-self-invocation` — Phase 3A proves all-or-none reserve/release rollback in one default-propagation boundary; savepoints, alternate propagation, self-invocation, and timeouts remain unverified
+- 🟡 `spring-transactional-propagation-savepoints-and-self-invocation` — Phase 3A proves reserve rollback and transactional release boundaries under default propagation; savepoints, alternate propagation, self-invocation, and timeouts remain unverified
 - 🟡 `postgres-write-performance-batching-and-idempotency` — batching configured, not measured; idempotency in 3B/4
 - 🟡 `database-isolation-levels-mvcc-and-anomalies` — Phase 3A proves selected PostgreSQL pessimistic-lock shapes (last unit, sorted multi-SKU locks, concurrent release); broader levels and anomalies remain separate experiments
 - 🟡 `money-invariant-enforcement-frontend-to-db` — positive four-decimal price range is enforced at API/domain/schema boundaries; frontend and concurrent balance/stock invariants remain
