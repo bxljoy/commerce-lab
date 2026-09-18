@@ -16,7 +16,7 @@ See [ADR-0004](docs/adr/0004-evidence-driven-learning-roadmap.md) for the revise
 | Service | Owns | Status |
 |---|---|---|
 | `order-service` | Order aggregate; later confirmation/rejection and cancellation | Phase 2 complete — place + get backed by Postgres |
-| `inventory-service` | Stock per SKU (reserve / release) | not started (Phase 3A) |
+| `inventory-service` | Stock and reservations per SKU (reserve / get / release) | Phase 3A complete — PostgreSQL contention and rollback proofs |
 | `frontend` | React SPA to place orders and watch them confirm | not started (Phase 6) |
 
 ## Tech stack
@@ -35,15 +35,26 @@ See [ADR-0004](docs/adr/0004-evidence-driven-learning-roadmap.md) for the revise
 ## Quick start
 
 ```bash
-make test     # unit + slice tests (Surefire; fast, no Docker)
-make verify   # all tests incl. Testcontainers integration tests (Failsafe; needs Docker)
-make verify-restart # build the image and prove an order survives service restart
-make build    # build the order-service jar locally
-make up       # build images and start the stack (needs Docker running)
-make health   # curl the order-service health endpoint
-make ps       # show service health
-make logs     # tail logs
-make down     # stop the stack
+make test                   # both services' fast Surefire suites
+make test-order             # order-service fast suite only
+make test-inventory         # inventory-service fast suite only
+make verify                 # both full suites, including Testcontainers
+make verify-order           # order-service full suite only
+make verify-inventory       # inventory-service full suite only
+make verify-restart         # isolated order image/restart proof
+make verify-inventory-image # isolated inventory image reserve/release proof
+make up                     # build images and start both service/database pairs
+make ps                     # show service health
+make logs                   # tail logs
+make down                   # stop the stack and retain database volumes
+docker compose down -v      # stop the stack and reset both local databases
+```
+
+Each Maven project also builds independently:
+
+```bash
+mvn -f order-service/pom.xml -B verify
+mvn -f inventory-service/pom.xml -B verify
 ```
 
 Run `make` with no target for the full list.
@@ -56,6 +67,19 @@ Run `make` with no target for the full list.
 > `/var/run/docker.sock`), point it there in `~/.testcontainers.properties`:
 > `docker.host=unix:///Users/<you>/.orbstack/run/docker.sock`. On standard Docker / CI this
 > isn't needed.
+
+### Local ports and ownership
+
+| Component | Host port | Ownership |
+|---|---:|---|
+| `order-service` | `8080` | `orderdb`, `order-pgdata`, `order-network` |
+| order PostgreSQL | `5432` | Used only by `order-service` |
+| `inventory-service` | `8081` | `inventory`, `inventory-pgdata`, `inventory-network` |
+| inventory PostgreSQL | `5433` | Used only by `inventory-service` |
+
+The explicit Compose networks are disjoint. Starting an isolated verification target
+brings up only its service/database pair and removes that project's containers,
+volume, and network on exit.
 
 ### Verify Phase 0
 
@@ -109,18 +133,64 @@ restarts only `order-service`, and fetches the same value and line sequence. The
 Postgres volume also retains data across `docker compose down` / `up` (without `-v`).
 Exact claims and limits are in the [scoreboard](docs/notes-verification.md).
 
+### Verify Phase 3A — reserve and release inventory
+
+`inventory-service` is independently deployable and owns a separate PostgreSQL
+database. Flyway seeds two demo rows: `SKU-APPLE` with 10 available units and
+`SKU-BANANA` with 5. Start the stack, choose a fresh order ID, and exercise the
+complete public inventory API:
+
+```bash
+docker compose down -v # optional fresh demo; removes both local database volumes
+make up
+ORDER_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+
+# reserve both demo SKUs -> 201 Created and status RESERVED
+curl -i -X POST http://localhost:8081/api/v1/reservations \
+  -H 'Content-Type: application/json' \
+  -d "{\"orderId\":\"${ORDER_ID}\",\"lines\":[{\"sku\":\"SKU-APPLE\",\"quantity\":2},{\"sku\":\"SKU-BANANA\",\"quantity\":1}]}"
+
+# retrieve the reservation -> 200, preserving request line order
+curl http://localhost:8081/api/v1/reservations/${ORDER_ID}
+
+# read current stock -> 200 with availableQuantity 8
+curl http://localhost:8081/api/v1/stock/SKU-APPLE
+
+# release once, then repeat -> both 200 RELEASED; stock is restored only once
+curl -i -X PUT http://localhost:8081/api/v1/reservations/${ORDER_ID}/release
+curl -i -X PUT http://localhost:8081/api/v1/reservations/${ORDER_ID}/release
+
+# restored demo stock -> availableQuantity 10
+curl http://localhost:8081/api/v1/stock/SKU-APPLE
+```
+
+Duplicate SKUs are rejected before database mutation. A reservation request for an
+existing `orderId` returns `409 Conflict`, even when its payload matches or the
+reservation was released. Payload-aware replay and lost-response recovery belong to
+Phase 3B; Phase 3A does not claim reservation idempotency.
+
+On real PostgreSQL, the integration suite proves the implemented contention shapes:
+ascending pessimistic stock locks prevent two distinct orders from overselling the
+tested final unit, an insufficient multi-SKU request rolls back every stock and
+reservation change, and a reservation-row-first release restores stock at most once
+under the tested sequential and concurrent calls. These are bounded proofs, not a
+claim about every isolation level, deadlock shape, or SQL anomaly. See
+[ADR-0006](docs/adr/0006-inventory-reservation-correctness.md) and the
+[scoreboard](docs/notes-verification.md).
+
 ### Generated API code
 
-The API interface and DTOs are generated from `order-service/openapi.yaml` into
-`order-service/target/generated-sources/openapi` at build time and are **not committed**.
+Each service's API interface and DTOs are generated from its `openapi.yaml` into
+its `target/generated-sources/openapi` directory at build time and are **not committed**.
 The Maven plugin adds that directory to the compile source roots, so the generated
 `...generated.api` / `...generated.model` types import like any other class — but only
 **after** a build has run. Regeneration never appears in a git diff; the reviewable
-artifact is `openapi.yaml` itself.
+artifacts are `order-service/openapi.yaml` and `inventory-service/openapi.yaml`.
 
 ```bash
 # after a fresh clone, run once so the IDE can resolve the generated types:
 mvn -f order-service/pom.xml compile
+mvn -f inventory-service/pom.xml compile
 ```
 
 CI (`make verify`) and the Docker build regenerate automatically — never copy or hand-edit
@@ -136,12 +206,11 @@ commerce-lab/
 │   ├── adr/                # one ADR per phase
 │   └── notes-verification.md   # checklist: which vault note each phase proves
 ├── order-service/          # Phase 0+ (Spring Boot)
-├── inventory-service/      # planned — Phase 3
+├── inventory-service/      # Phase 3A (Spring Boot)
 └── frontend/               # planned — Phase 6
 ```
 
-> `inventory-service/` and `frontend/` are listed for orientation; they don't exist
-> yet and are created when their phase begins.
+> `frontend/` is listed for orientation; it is created when Phase 6 begins.
 
 ## How this repo is meant to grow
 
@@ -153,7 +222,6 @@ Write an ADR for meaningful decisions; smaller experiments need only a short not
 
 | Next milestone | What it proves |
 |---|---|
-| Phase 3A | Inventory cannot oversell; multi-SKU reservations are atomic |
 | Phase 3B | Synchronous reservations are idempotent and recover from lost responses; network calls stay outside DB transactions |
 | Phase 4A | Committed events survive publisher failure through an outbox |
 | Phase 4B | Both services recover from duplicates, rejection, cancellation, and delayed events |

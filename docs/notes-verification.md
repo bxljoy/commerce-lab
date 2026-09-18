@@ -21,7 +21,7 @@ See [ADR-0004](adr/0004-evidence-driven-learning-roadmap.md) for the revised sco
 | 0 | Rails: order-service skeleton, health, Dockerfile, compose, Makefile | ✅ |
 | 1 | One service done right (OpenAPI-first, layered, validation, RFC-7807, unit/slice tests) | ✅ |
 | 2 | Reliable Postgres persistence and bounded cleanup | ✅ |
-| 3A | Inventory correctness under concurrency | ⬜ |
+| 3A | Inventory correctness under tested PostgreSQL contention shapes | ✅ |
 | 3B | Sync integration, idempotency, uncertain-outcome recovery | ⬜ |
 | 4A | Durable event delivery through an outbox | ⬜ |
 | 4B | Workflow recovery, compensation, idempotent consumers, DLQ | ⬜ |
@@ -31,11 +31,17 @@ See [ADR-0004](adr/0004-evidence-driven-learning-roadmap.md) for the revised sco
 
 ## Current evidence
 
-2026-09-07, working tree based on commit `8df3c3b`: `make verify` passed on local
-macOS / Java 21.0.5 / OrbStack with Docker access outside the Codex sandbox.
-Surefire: 18 tests; Failsafe: 11 tests; no failures or skips. `make verify-restart`
-also built the image, created an order with four-decimal pricing and two ordered
-lines, restarted only `order-service`, and fetched the same value and line order.
+2026-09-18, the Phase 3A closeout candidate: `make verify` passed on local macOS
+26.6.2 (Apple Silicon), Java 21.0.5, Maven 3.9.14, OrbStack, and
+`postgres:16-alpine`. Both independently buildable Maven projects completed with 43
+Surefire and 35 Failsafe tests: 78 total, 0 failures, 0 errors, 0 skipped.
+
+`make verify-restart` started only the order service/database pair, built the order
+image, restarted `order-service`, fetched the same persisted order and line sequence,
+and removed its isolated Compose containers, volume, and network. Separately,
+`make verify-inventory-image` started only the inventory pair, reserved both demo
+SKUs, released the reservation twice, asserted exact restoration to
+`SKU-APPLE=10` and `SKU-BANANA=5`, and removed its isolated Compose resources.
 
 Test paths below are under `order-service/src/test/java/com/commercelab/order/`.
 
@@ -51,6 +57,23 @@ Test paths below are under `order-service/src/test/java/com/commercelab/order/`.
 | Assigned UUID creation uses insert semantics without lookup SELECT | `OrderPersistenceIT.assignedIdInsertUsesPersistWithoutLookupSelect` | Hibernate statistics with batching disabled for this test; update semantics are intentionally a separate future operation |
 | Detached lazy collection throws after repository session closes | `OrderPersistenceIT.detachedLazyCollectionThrowsOutsideTransaction` | Demonstrates detachment, not HTTP-scoped OSIV behavior |
 | Built image retains an order across service restart | `make verify-restart` | Restarts the service, not Postgres or the host; not a backup/restore or durability benchmark |
+
+Inventory test paths below are under
+`inventory-service/src/test/java/com/commercelab/inventory/`.
+
+| Claim | Evidence | Limit |
+|---|---|---|
+| Duplicate SKUs fail before persistence; domain lines remain immutable and ordered; release is terminal | `domain/InventoryDomainTest` | Pure domain behavior; no Spring transaction or PostgreSQL locking claim |
+| Reservation persistence preserves line order/state; stock rows are returned and pessimistically locked in ascending SKU order; a waiter observes committed reservation state | `persistence/InventoryPersistenceIT` | Tested on specific PostgreSQL row-lock interactions; not every deadlock, isolation level, or anomaly |
+| Multi-SKU success is atomic; insufficiency rolls back all stock and reservation changes | `service/InventoryReservationIT.reservesMultipleSkusAtomicallyAndPreservesRequestOrder`, `insufficientSecondSkuRollsBackEveryChange` | Two-SKU fixtures and the implemented transaction path; not arbitrary distributed transactions |
+| Two distinct orders cannot both reserve the tested final unit | `service/InventoryReservationIT.concurrentOrdersCannotReserveTheLastUnitTwice` | One PostgreSQL last-unit race at default isolation; not a universal no-anomaly or throughput proof |
+| Reversed overlapping SKU requests complete under ascending locks | `service/InventoryReservationIT.reversedSkuRequestsCompleteWithoutDeadlock` | One controlled two-request shape; does not prove deadlock freedom for every workload |
+| Existing and concurrently duplicated `orderId` requests conflict and roll back stock | `service/InventoryReservationIT.existingOrderIdIsAlwaysAConflictWithoutChangingStockAgain`, `concurrentSameOrderPrimaryKeyViolationBecomesDuplicateConflictAndRollsBackStock` | Duplicate requests return `409`; payload-aware replay remains Phase 3B |
+| Sequential and concurrent release restore persisted quantities at most once | `service/InventoryReservationIT.repeatedReleaseRestoresStockOnce`, `concurrentReleaseRestoresStockOnce` | One reservation-row-first implementation and controlled concurrent pair; not a general exactly-once distributed-delivery claim |
+| Declared reserve/get/stock/release HTTP outcomes map to stable responses | `api/InventoryApiControllerTest` | MVC slice with mocked service; selected runtime outcomes, not exhaustive OpenAPI conformance |
+| Reserve, get, double release, and exact stock restoration work through real beans and PostgreSQL | `api/InventoryApiIT.reserveGetAndDoubleReleaseThroughRealBeansAndPostgres` | One full local workflow; no order-service call, timeout, retry, or lost-response recovery |
+| Fresh schema startup, health, and disabled OSIV remain valid | `InventoryServiceApplicationIT` | Startup/configuration guard, not a contention or performance experiment |
+| Built inventory image reserves and double-releases seeded SKUs, then cleans up | `make verify-inventory-image` | Local Compose image proof; no host restart, backup/restore, or hosted-runtime claim |
 
 ## Phase 2 cleanup: completed 2026-09-07
 
@@ -80,15 +103,37 @@ Follow-ups outside this bounded gate: narrow generic `IllegalArgumentException`
 translation and review dependency compatibility before creating inventory.
 Additional batching/propagation experiments stay unverified until observed.
 
+## Phase 3A closeout: completed 2026-09-18
+
+These checks close only the Phase 3A inventory gate. Reservation replay, remote-call
+retries, and uncertain-outcome recovery remain Phase 3B work.
+
+- [x] Give inventory its own service, Maven build, OpenAPI contract, PostgreSQL
+  database, Flyway schema, named volume, and disjoint Compose network.
+- [x] Reject duplicate SKUs before database mutation and preserve caller line order
+  independently from ascending lock order.
+- [x] Lock stock rows pessimistically in ascending SKU order and prove the bounded
+  last-unit and reversed multi-SKU PostgreSQL contention shapes.
+- [x] Keep reserve and release all-or-none in short transactions; lock the
+  reservation first during release and restore stock at most once under tested
+  sequential and concurrent calls.
+- [x] Keep one lifetime reservation per `orderId`; return `409 Conflict` for a
+  duplicate instead of claiming Phase 3B payload-aware replay.
+- [x] Verify 78 aggregate Maven tests, isolated order restart, isolated inventory
+  image reserve/double-release, separate networks, and clean teardown.
+- [x] Record decisions and limits in ADR-0006, the README, this scoreboard, and the
+  named source-note update patch.
+
 ## Future acceptance criteria
 
-### Phase 3A: inventory correctness
+### Phase 3A: inventory correctness (completed 2026-09-18)
 
-- [ ] Inventory owns its database and stock/reservation model; no shared domain jar.
-- [ ] Concurrent distinct orders competing for the last unit cannot oversell.
-- [ ] Multi-SKU reservations commit all lines or none; rejection leaves stock unchanged.
-- [ ] Define duplicate SKUs, insufficient stock, reservation identity, and release semantics.
-- [ ] Choose and test a locking/conditional-update strategy on real Postgres.
+- [x] Inventory owns its database and stock/reservation model; no shared domain jar.
+- [x] Concurrent distinct orders competing for the tested last unit cannot oversell.
+- [x] Multi-SKU reservations commit all lines or none; rejection leaves stock unchanged.
+- [x] Duplicate SKUs, insufficient stock, reservation identity, and release semantics are explicit.
+- [x] Ascending pessimistic locks are tested on real Postgres; optimistic and
+  conditional-update alternatives remain valid candidates for a separate experiment.
 
 ### Phase 3B: synchronous integration
 
@@ -149,9 +194,9 @@ Additional batching/propagation experiments stay unverified until observed.
 - ✅ `jpa-entity-equals-and-hashcode` — assigned IDs/reference equality implemented; creation explicitly uses `persist`, and statistics prove no lookup SELECT on insert
 - 🟡 `osiv-session-vs-transaction-and-phantom-write` — OSIV property and interceptor absence guarded; detached lazy loading demonstrated; phantom-write experiment remains
 - 🟡 `jpa-fetching-projections-and-lazy-initialization` — explicit fetch and domain mapping work; projections and broad query-count/N+1 experiments remain
-- 🟡 `spring-transactional-propagation-savepoints-and-self-invocation` — boundaries configured; propagation/savepoint/self-invocation nuances unverified
+- 🟡 `spring-transactional-propagation-savepoints-and-self-invocation` — Phase 3A proves all-or-none reserve/release rollback in one default-propagation boundary; savepoints, alternate propagation, self-invocation, and timeouts remain unverified
 - 🟡 `postgres-write-performance-batching-and-idempotency` — batching configured, not measured; idempotency in 3B/4
-- ⬜ `database-isolation-levels-mvcc-and-anomalies` — stock concurrency moves to 3A; broader isolation anomalies remain separate experiments
+- 🟡 `database-isolation-levels-mvcc-and-anomalies` — Phase 3A proves selected PostgreSQL pessimistic-lock shapes (last unit, sorted multi-SKU locks, concurrent release); broader levels and anomalies remain separate experiments
 - 🟡 `money-invariant-enforcement-frontend-to-db` — positive four-decimal price range is enforced at API/domain/schema boundaries; frontend and concurrent balance/stock invariants remain
 
 ### Phase 3A/3B — Inventory correctness + sync integration
