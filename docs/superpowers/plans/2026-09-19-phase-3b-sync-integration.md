@@ -16,8 +16,9 @@ OpenAPI Generator 7.10.0, Testcontainers, and a compatible pinned Resilience4j v
 
 **Spec:** [Phase 3B design](../specs/2026-09-19-phase-3b-sync-integration-design.md).
 
-**Status:** Approved on 2026-09-19; implementation in progress on
-`codex/phase-3b-sync-integration`. Execution evidence is tracked per task.
+**Status:** Implemented and locally verified on 2026-09-19 on
+`codex/phase-3b-sync-integration`; whole-branch review and scoped fixes are complete.
+Hosted CI remains pending on the unpushed branch. See the acceptance scoreboard.
 
 ## Global constraints
 
@@ -68,6 +69,7 @@ record OrderCreation(Order order, boolean created) {}
 // OrderProgressService.apply(UUID id, InventoryOutcome outcome) -> Order
 // OrderProgressService.findDueIds(Instant now, int limit) -> List<UUID>
 // OrderProgressService.defer(UUID id, String failureCode, Instant nextAttempt) -> void
+// OrderProgressService.deferRecovery(UUID id, String failureCode) -> void
 // OrderProgressService.block(UUID id, String issueCode) -> void
 record PendingOrderSnapshot(Order order, int attemptCount, String correlationId) {}
 
@@ -107,7 +109,7 @@ and `inventory-service/src/test/java/com/commercelab/inventory/service/Reservati
 with immutable SKU-sorted lines and `JsonNode canonicalJson()`; reject duplicates
 and invalid/null lines using existing domain validation.
 
-- [ ] Write tests with these concrete cases:
+- [x] Write tests with these concrete cases:
 
 ```text
 [(B,2),(A,1)] equals [(A,1),(B,2)]
@@ -116,11 +118,11 @@ duplicate A, null line, blank SKU, zero quantity -> invalid before persistence
 mutating caller list after construction does not change canonical content
 ```
 
-- [ ] Run `mvn -f inventory-service/pom.xml -B -Dtest=ReservationPayloadTest test`;
+- [x] Run `mvn -f inventory-service/pom.xml -B -Dtest=ReservationPayloadTest test`;
   confirm failure identifies the missing payload behavior.
-- [ ] Implement validation, immutable sorting, and structured JSON array/object
+- [x] Implement validation, immutable sorting, and structured JSON array/object
   construction with Jackson. Use the same sorted field content in SQL backfill.
-- [ ] Rerun the focused test and `make test-inventory`; review and commit the slice.
+- [x] Rerun the focused test and `make test-inventory`; review and commit the slice.
 
 ## Task 2: Durable inventory outcomes and HTTP replay
 
@@ -134,16 +136,16 @@ under inventory test package root; update existing API/reservation tests.
 **Interface:** Expose reserve/getAttempt outcomes as defined above. Store claims
 and results inside the same transaction as stock changes.
 
-- [ ] Add real-Postgres red tests for concurrent same ID/same payload, reordered
+- [x] Add real-Postgres red tests for concurrent same ID/same payload, reordered
   replay, different payload conflict, and replay after release. Assert one decrement.
-- [ ] Add rejection replay tests: reserve too much, change stock in a test fixture,
+- [x] Add rejection replay tests: reserve too much, change stock in a test fixture,
   retry and GET the same attempt; assert original rejection snapshot. Include an
   unknown SKU and assert no reservation/stock mutation but one committed ledger row.
-- [ ] Add a V2-to-V3 migration fixture containing RESERVED and RELEASED reservations
+- [x] Add a V2-to-V3 migration fixture containing RESERVED and RELEASED reservations
   with reversed caller line order. Assert successful semantic replays after upgrade.
-- [ ] Run `mvn -f inventory-service/pom.xml -B -Dit.test=InventoryReplayIT,InventoryMigrationIT verify`;
+- [x] Run `mvn -f inventory-service/pom.xml -B -Dit.test=InventoryReplayIT,InventoryMigrationIT verify`;
   observe failures before implementing the new behavior.
-- [ ] Implement claim/read/result SQL using structured JSON parameters:
+- [x] Implement claim/read/result SQL using structured JSON parameters:
 
 ```sql
 INSERT INTO inventory_reservation_attempts
@@ -156,11 +158,11 @@ ON CONFLICT (order_id) DO NOTHING;
   A new claim checks locked stock, returns a typed rejection after saving its
   snapshot, or saves stock/reservation/success atomically. An unexpected exception
   rolls all changes back. Backfill canonical JSON from existing lines ordered by SKU.
-- [ ] Update OpenAPI/HTTP tests for 201 new, 200 matching success replay, typed 409
+- [x] Update OpenAPI/HTTP tests for 201 new, 200 matching success replay, typed 409
   conflict/rejection and GET rejected 409; keep all problem bodies documented.
-- [ ] Update old duplicate-ID tests to assert the new explicit contract. Preserve
+- [x] Update old duplicate-ID tests to assert the new explicit contract. Preserve
   multi-SKU atomicity, sorted locks, double release, and unrelated-integrity tests.
-- [ ] Run `make verify-inventory`; review and commit.
+- [x] Run `make verify-inventory`; review and commit.
 
 ## Task 3: Atomic order identity and pending creation
 
@@ -173,18 +175,18 @@ tests `OrderIdempotencyIT.java`, `service/OrderPayloadTest.java`.
 **Interface:** `createOrReplay(key, command, correlationId)` as above; immutable
 canonical order content is available from `OrderPayload.from(command)`.
 
-- [ ] Write tests for required/invalid keys, same-key concurrent requests, conflicting
+- [x] Write tests for required/invalid keys, same-key concurrent requests, conflicting
   payloads, numeric scale equality, reordered line conflict, null lines, and duplicate
   SKUs. Assert invalid commands leave both tables empty.
-- [ ] Run `mvn -f order-service/pom.xml -B -Dit.test=OrderIdempotencyIT verify` and
+- [x] Run `mvn -f order-service/pom.xml -B -Dit.test=OrderIdempotencyIT verify` and
   `mvn -f order-service/pom.xml -B -Dtest=OrderPayloadTest test`; observe red results.
-- [ ] Add migration widening status to VARCHAR(32), new request table with named key
+- [x] Add migration widening status to VARCHAR(32), new request table with named key
   constraint, canonical JSONB and SHA-256/version metadata. Preserve existing rows.
-- [ ] Implement atomic pending creation and fresh-transaction replay after named
+- [x] Implement atomic pending creation and fresh-transaction replay after named
   key-race failure. Keep creation's `persist` semantics; do not merge existing orders.
-- [ ] Add required key header and 200/201/202/409 contracts. Until Task 5 connects
+- [x] Add required key header and 200/201/202/409 contracts. Until Task 5 connects
   HTTP, new orders return 202 with Location and Retry-After; GET reads current state.
-- [ ] Test the new API and update creation tests to pending. Run `make verify-order`;
+- [x] Test the new API and update creation tests to pending. Run `make verify-order`;
   review and commit. Explicitly document this intermediate pending-only stage.
 
 ## Task 4: Safe state transitions and due work persistence
@@ -197,17 +199,17 @@ Add `OrderProgressIT.java` and extend `FlywayMigrationIT.java`.
 
 **Interface:** load/apply/findDueIds/defer/block as in the interface map.
 
-- [ ] Test PENDING -> CONFIRMED/REJECTED, unchanged terminal results on stale writes,
+- [x] Test PENDING -> CONFIRMED/REJECTED, unchanged terminal results on stale writes,
   historical PLACED exclusion, and concurrent finalization. Include pending issue
   visibility and due-time persistence after entity-manager/context recreation.
-- [ ] Run `mvn -f order-service/pom.xml -B -Dit.test=OrderProgressIT,FlywayMigrationIT verify`.
-- [ ] Add version (zero backfill), recovery timestamps/count/blocked/code/correlation
+- [x] Run `mvn -f order-service/pom.xml -B -Dit.test=OrderProgressIT,FlywayMigrationIT verify`.
+- [x] Add version (zero backfill), recovery timestamps/count/blocked/code/correlation
   columns and due-work index. Backfill eligible pending rows' due times; leave
   historical PLACED rows unscheduled. Update managed entities for transitions.
-- [ ] Implement guarded state changes and optimistic-conflict reload outside the
+- [x] Implement guarded state changes and optimistic-conflict reload outside the
   failed transaction. Increment recovery attempts and update due times atomically;
   ignore defer/block calls for terminal orders. Use an injectable Clock.
-- [ ] Test bounded ID selection without paginating a collection fetch, then fetch
+- [x] Test bounded ID selection without paginating a collection fetch, then fetch
   snapshots in separate short transactions. Run `make verify-order`; review and commit.
 
 ## Task 5: Synchronous HTTP path with bounded resilience
@@ -222,14 +224,14 @@ Add `OrderProgressIT.java` and extend `FlywayMigrationIT.java`.
 **Interface:** gateway and coordinator.attempt from the interface map. Rest gateway
 performs one physical call; coordinator applies the two-attempt request policy.
 
-- [ ] Write HTTP-fixture tests for successful reserve, typed rejection, timeouts,
+- [x] Write HTTP-fixture tests for successful reserve, typed rejection, timeouts,
   5xx, unexpected 4xx, invalid/mismatched success bodies, and released replay.
   Assert exactly two maximum POSTs, zero 4xx retry, no network call when circuit open.
-- [ ] Verify and pin compatible HTTP pooling, Resilience4j, and HTTP test-fixture
+- [x] Verify and pin compatible HTTP pooling, Resilience4j, and HTTP test-fixture
   dependencies using official docs and dependency resolution; record versions.
-- [ ] Run `mvn -f order-service/pom.xml -B -Dtest=InventoryGatewayTest,CorrelationIdFilterTest test`
+- [x] Run `mvn -f order-service/pom.xml -B -Dtest=InventoryGatewayTest,CorrelationIdFilterTest test`
   and `mvn -f order-service/pom.xml -B -Dit.test=OrderReservationIT verify`; observe red.
-- [ ] Implement gateway DTO mapping, timeouts and per-call breaker; add explicit
+- [x] Implement gateway DTO mapping, timeouts and per-call breaker; add explicit
   response verification. Implement this coordinator flow:
 
 ```text
@@ -240,12 +242,12 @@ still transient -> progress.defer and return persisted pending order
 protocol/released inconsistency -> progress.block and return persisted pending order
 ```
 
-- [ ] Wire only new creations into the coordinator. Replays return stored state.
+- [x] Wire only new creations into the coordinator. Replays return stored state.
   Verify 201 CONFIRMED/REJECTED, 202 pending, and 200 terminal replay over real beans.
-- [ ] Add transaction probes at gateway entry; while the HTTP fixture blocks, prove
+- [x] Add transaction probes at gateway entry; while the HTTP fixture blocks, prove
   another transaction can update the order row. Test breaker open/half-open/closed
   with controlled state/time, including business rejection excluded from failures.
-- [ ] Add correlation input/echo/propagation tests and thread-context cleanup checks.
+- [x] Add correlation input/echo/propagation tests and thread-context cleanup checks.
   Run `make verify-order`; review and commit.
 
 ## Task 6: Automatic reconciliation and restart convergence
@@ -257,19 +259,19 @@ extend coordinator and progress service. Add `OrderRecoveryIT.java` and
 **Interface:** coordinator.reconcile and worker.runOnce as above. Worker is enabled
 by default, configurable fixed delay and batch size; disable scheduling in most tests.
 
-- [ ] Test GET RESERVED/rejected/404/RELEASED, transient GET failure, blocked protocol
+- [x] Test GET RESERVED/rejected/404/RELEASED, transient GET failure, blocked protocol
   failure, due-time cap, and maximum batch size with an injected clock.
-- [ ] Test pending insert followed by context restart, and remote success followed
+- [x] Test pending insert followed by context restart, and remote success followed
   by skipped local apply then context restart. Reuse the DB; assert convergence.
-- [ ] Test two workers plus request finalization concurrently. Assert one terminal
+- [x] Test two workers plus request finalization concurrently. Assert one terminal
   transition and safe repeated inventory intent, including optimistic reloads.
-- [ ] Run `mvn -f order-service/pom.xml -B -Dit.test=OrderRecoveryIT verify` and
+- [x] Run `mvn -f order-service/pom.xml -B -Dit.test=OrderRecoveryIT verify` and
   `mvn -f order-service/pom.xml -B -Dtest=OrderRecoveryScheduleTest test`; confirm red.
-- [ ] Implement due-ID scan, sequential snapshots, GET then optional POST, and
+- [x] Implement due-ID scan, sequential snapshots, GET then optional POST, and
   persisted capped schedule. No nested HTTP retry in a recovery pass. Clear logging
   context after each order even when a call fails. Catch per-order failures so one
   bad item does not prevent processing the rest of a batch.
-- [ ] Verify blocked work is visible and skipped, legacy orders never contact
+- [x] Verify blocked work is visible and skipped, legacy orders never contact
   inventory, and deferred rows survive restart. Run `make verify-order`; review and commit.
 
 ## Task 7: Consumer contract evidence
@@ -282,15 +284,15 @@ to order tests, and relevant test resources/POM configuration.
 **Interface:** Versioned JSON fixtures describe only the fields/status/problem types
 consumers require. They remain separate from generated producer DTO expectations.
 
-- [ ] Create accepted/new, replay/released, stock-rejected, missing, and conflict
+- [x] Create accepted/new, replay/released, stock-rejected, missing, and conflict
   fixtures with the exact status and fields in the spec. Order fixtures cover
   201 confirmed/rejected, 202 pending, 200 replay and 409 key conflict.
-- [ ] Make real producer API tests validate these consumer expectations, and make
+- [x] Make real producer API tests validate these consumer expectations, and make
   the actual order gateway deserialize inventory fixtures and classify outcomes.
-- [ ] Add a negative control: remove required `orderId`, change `quantity` to text,
+- [x] Add a negative control: remove required `orderId`, change `quantity` to text,
   and change a stock rejection's problem type. Assert contract validation fails.
   Require explicitly observed failure for an intentionally mutated producer fixture.
-- [ ] Run `make verify`; confirm the normal contracts pass and negative controls
+- [x] Run `make verify`; confirm the normal contracts pass and negative controls
   reject mutations. Document covered operations and limits; review and commit.
 
 ## Task 8: Real two-service failure proof, CI, and evidence
@@ -304,35 +306,42 @@ test-only failure proxy configuration under `scripts/fixtures/`.
 only its containers, networks, and volumes via exit trap. Existing service-specific
 checks remain independently runnable.
 
-- [ ] Add the application-only network and inventory base URL; preserve private DB
+- [x] Add the application-only network and inventory base URL; preserve private DB
   networks. Assert application containers can communicate, but databases are not
   attached to the shared network. No inventory dependency for order startup.
-- [ ] Update old curl/smoke requests with unique idempotency keys and new status
+- [x] Update old curl/smoke requests with unique idempotency keys and new status
   assertions. The isolated order restart check uses unavailable inventory to prove
   a pending order survives restart without adding inventory containers.
-- [ ] Build a test-only forwarding proxy that forwards reserve to real inventory,
+- [x] Build a test-only forwarding proxy that forwards reserve to real inventory,
   waits for its successful response, and drops the response to order. Exercise both
   request attempts being lost; verify inventory GET shows RESERVED and stock changed
   once. Keep that test hook outside production application code.
-- [ ] Restart order while it remains pending; restore normal proxy traffic, poll
+- [x] Restart order while it remains pending; restore normal proxy traffic, poll
   within a bounded deadline, and assert the same ID is CONFIRMED with unchanged
   reserved stock. Also prove restart before the first remote attempt recovers.
-- [ ] Run `make verify`, `make verify-restart`, `make verify-inventory-image`, and
+- [x] Run `make verify`, `make verify-restart`, `make verify-inventory-image`, and
   `make verify-sync-recovery`. Add the new target to hosted CI and check cleanup on
   failure paths. Record actual results and environment without reusing old counts.
-- [ ] Update the scoreboard with the exact evidence and limits, including committed
+- [x] Update the scoreboard with the exact evidence and limits, including committed
   rejection metadata versus unchanged stock, request replay versus response bytes,
   and blocked operational inconsistencies. Mark ADR-0007 accepted after design review
   and verified implementation. Update vault notes separately with appropriate access.
-- [ ] Review the whole branch, fix findings with focused regression checks, then
-  report the ready-to-merge result. Merge/push requires the user's instruction for
+- [x] Review the whole branch, fix findings with focused regression checks, then
+  report the reviewed local result; hosted CI still gates phase closeout. Merge/push requires the user's instruction for
   this phase; the Phase 3A merge authorization does not publish Phase 3B.
+
+**Runtime evidence boundary:** The pre-first-attempt image case starts from an
+atomic pending database fixture inserted while order-service is stopped; it is not
+an instruction-level HTTP-handler crash injection. The lost-response case uses
+both real services and discards committed 201/200 responses before restarting order.
+Hosted CI remains pending until publication is explicitly authorized.
 
 ## Completion review
 
-- [ ] Every design exit criterion maps to a passing test or recorded experiment.
-- [ ] Migrations preserve legacy data; canonical SQL and Java agree.
-- [ ] No gateway or sleep runs inside an active database transaction.
-- [ ] Crash recovery, competing requests, and business rejection are separately proven.
-- [ ] Both service builds and hosted checks pass; temporary faults are cleaned up.
-- [ ] Public examples, contract fixtures, ADR, and evidence describe the same behavior.
+- [x] Every local design exit criterion maps to a passing test or recorded experiment, with the boundaries above.
+- [x] Migrations preserve legacy data; canonical SQL and Java agree.
+- [x] No gateway or sleep runs inside an active database transaction.
+- [x] Recovery, competing requests, and business rejection have separate bounded evidence.
+- [x] Both service builds pass; temporary faults and owned runtime resources are cleaned up.
+- [ ] Hosted checks pass on the published branch (publication requires user authorization).
+- [x] Public examples, contract fixtures, ADR, and evidence describe the same behavior.

@@ -2,7 +2,7 @@
 
 Date: 2026-09-19
 Status: Accepted on 2026-09-19 after design review and locally verified implementation.
-Hosted CI and controller whole-branch closeout remain pending; not a merge authorization.
+Whole-branch review and scoped fixes are complete. Hosted CI remains pending; not a merge authorization.
 
 ## Context
 

@@ -288,7 +288,7 @@ Write an ADR for meaningful decisions; smaller experiments need only a short not
 
 | Next milestone | What it proves |
 |---|---|
-| Phase 3B closeout | Local evidence in the scoreboard; hosted CI and controller whole-branch review remain pending |
+| Phase 3B closeout | Local evidence and whole-branch review complete; hosted CI remains pending |
 | Phase 4A | Committed events survive publisher failure through an outbox |
 | Phase 4B | Both services recover from duplicates, rejection, cancellation, and delayed events |
 | Phase 5 | Logs, metrics, and traces explain successful and failed orders |

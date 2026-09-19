@@ -1,7 +1,8 @@
 # Phase 3B Synchronous Integration Design
 
 Date: 2026-09-19
-Status: Approved in conversation on 2026-09-19; implementation in progress.
+Status: Approved, implemented, locally verified and reviewed on 2026-09-19.
+Hosted CI remains pending on the unpushed branch; see the acceptance scoreboard for evidence and limits.
 
 ## Goal and scope
 

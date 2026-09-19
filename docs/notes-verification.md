@@ -22,7 +22,7 @@ See [ADR-0004](adr/0004-evidence-driven-learning-roadmap.md) for the revised sco
 | 1 | One service done right (OpenAPI-first, layered, validation, RFC-7807, unit/slice tests) | ✅ |
 | 2 | Reliable Postgres persistence and bounded cleanup | ✅ |
 | 3A | Inventory correctness under tested PostgreSQL contention shapes | ✅ |
-| 3B | Sync integration, idempotency, uncertain-outcome recovery | 🟡 Local implementation/evidence; hosted CI and controller closeout pending |
+| 3B | Sync integration, idempotency, uncertain-outcome recovery | 🟡 Locally verified and reviewed; hosted CI pending |
 | 4A | Durable event delivery through an outbox | ⬜ |
 | 4B | Workflow recovery, compensation, idempotent consumers, DLQ | ⬜ |
 | 5 | Observability — logs/metrics/traces across the system | ⬜ |
@@ -207,8 +207,10 @@ SIGKILL, host loss or an unavailable Docker daemon; no global prune is used.
 
 Hosted CI has the new runtime and deliberate failure-cleanup steps but **remains
 pending on this unpushed branch**. Local execution does not substitute for a hosted
-run. The controller owns vault updates, final plan checkboxes and whole-branch
-review; Task 8 does not claim those are complete.
+run. Whole-branch review and scoped re-review are complete: the recovered-shortage
+validation finding was reproduced, fixed, and verified on the final Java tree and
+rebuilt image. Plan progress and relevant vault notes are updated. No merge or push
+has been performed; hosted CI is the remaining external phase gate.
 
 ### Phase 4A: durable event delivery
 
