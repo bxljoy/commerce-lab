@@ -11,42 +11,67 @@ import urllib.request
 import uuid
 
 
-def compose(*args, input=None):
-    return subprocess.check_output(["docker", "compose", *args], input=input, text=True).strip()
+class Deadline:
+    def __init__(self, seconds, label):
+        self.end = time.monotonic() + seconds
+        self.label = label
+
+    def remaining(self, cap=None):
+        remaining = self.end - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(f"Deadline exceeded: {self.label}")
+        return remaining if cap is None else min(cap, remaining)
+
+    def sleep(self):
+        time.sleep(self.remaining(1))
 
 
-def order_url():
+def docker(*args, input=None, timeout=120, deadline=None):
+    deadline = deadline or Deadline(timeout, "docker " + " ".join(args[:2]))
+    output = subprocess.check_output(["docker", *args], input=input, text=True,
+                                     timeout=deadline.remaining(timeout))
+    deadline.remaining()
+    return output.strip()
+
+
+def compose(*args, input=None, timeout=120, deadline=None):
+    return docker("compose", *args, input=input, timeout=timeout, deadline=deadline)
+
+
+def order_url(deadline=None):
     # Docker may reassign an ephemeral published port on restart/start.
-    url = "http://" + compose("port", "order-service", "8080")
+    url = "http://" + compose("port", "order-service", "8080", timeout=10, deadline=deadline)
     print(f"Order endpoint: {url}", flush=True)
     return url
 
 
-def request(base, path, expected, method="GET", body=None, key=None):
+def request(base, path, expected, method="GET", body=None, key=None, deadline=None):
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Idempotency-Key"] = key
     req = urllib.request.Request(base + path, method=method, headers=headers,
                                  data=None if body is None else json.dumps(body).encode())
     try:
-        response = urllib.request.urlopen(req, timeout=5)
+        response = urllib.request.urlopen(req, timeout=5 if deadline is None else deadline.remaining(5))
     except urllib.error.HTTPError as error:
         response = error
     with response:
         payload = response.read()
+        if deadline is not None:
+            deadline.remaining()
         assert response.status == expected, (path, expected, response.status, payload)
         return json.loads(payload), response.headers
 
 
-def wait_health(base):
-    deadline = time.monotonic() + 90
-    while time.monotonic() < deadline:
+def wait_health(base, deadline=None):
+    deadline = deadline or Deadline(90, "service health")
+    while True:
+        deadline.remaining()
         try:
-            request(base, "/actuator/health", 200)
+            request(base, "/actuator/health", 200, deadline=deadline)
             return
         except (OSError, AssertionError):
-            time.sleep(1)
-    raise AssertionError("Service health deadline exceeded")
+            deadline.sleep()
 
 
 def stock(base):
@@ -54,26 +79,25 @@ def stock(base):
             for sku in ("SKU-APPLE", "SKU-BANANA")}
 
 
-def order(base, order_id, status):
-    value = request(base, "/api/v1/orders/" + order_id, 200)[0]
+def order(base, order_id, status, deadline=None):
+    value = request(base, "/api/v1/orders/" + order_id, 200, deadline=deadline)[0]
     assert value["id"] == order_id and value["status"] == status, value
     return value
 
 
 def await_confirmed(base, order_id):
-    deadline = time.monotonic() + 90
-    while time.monotonic() < deadline:
-        value = request(base, "/api/v1/orders/" + order_id, 200)[0]
+    deadline = Deadline(90, "order confirmation")
+    while True:
+        value = request(base, "/api/v1/orders/" + order_id, 200, deadline=deadline)[0]
         assert value["id"] == order_id and value["recoveryIssue"] is None, value
         if value["status"] == "CONFIRMED":
             return value
         assert value["status"] == "PENDING_INVENTORY", value
-        time.sleep(1)
-    raise AssertionError(("Recovery deadline exceeded", value))
+        deadline.sleep()
 
 
-def assert_services(expected):
-    actual = set(compose("ps", "--services", "--status", "running").splitlines())
+def assert_services(expected, deadline=None):
+    actual = set(compose("ps", "--services", "--status", "running", timeout=10, deadline=deadline).splitlines())
     assert actual == set(expected), actual
 
 
@@ -92,12 +116,13 @@ def restart_proof():
     def outbox_snapshot():
         return compose("exec", "-T", "postgres", "psql", "-U", "order", "-d", "orderdb", "-Atc",
                        f"SELECT event_id || ':' || payload FROM order_outbox WHERE order_id='{order_id}' "
-                       "AND delivered_at IS NULL AND attempt_count=0")
+                       "AND delivered_at IS NULL AND attempt_count=0", timeout=10)
     snapshot = outbox_snapshot()
     assert snapshot and len(snapshot.splitlines()) == 1, snapshot
-    compose("restart", "order-service")
-    base = order_url()
-    wait_health(base)
+    startup = Deadline(120, "order restart and health")
+    compose("restart", "order-service", deadline=startup)
+    base = order_url(deadline=startup)
+    wait_health(base, deadline=startup)
     actual = order(base, order_id, "PENDING_INVENTORY")
     assert actual["currency"] == "EUR" and actual["totalAmount"] == 17.9999, actual
     assert actual["lines"] == created["lines"], actual
@@ -140,8 +165,8 @@ def network_proof():
     shared = os.environ["COMPOSE_PROJECT_NAME"] + "_service-network"
     for service in ("order-service", "inventory-service", "postgres", "inventory-postgres"):
         container = compose("ps", "-q", service)
-        networks = json.loads(subprocess.check_output(
-            ["docker", "inspect", "--format", "{{json .NetworkSettings.Networks}}", container], text=True))
+        networks = json.loads(docker("inspect", "--format", "{{json .NetworkSettings.Networks}}", container,
+                                     timeout=10))
         assert (shared in networks) == service.endswith("-service"), (service, networks)
     # Direct app-to-app DNS/HTTP, independent of the injected proxy route.
     compose("exec", "-T", "order-service", "curl", "--max-time", "5", "-fsS",
@@ -233,4 +258,15 @@ def sync_proof():
 
 
 if __name__ == "__main__":
-    {"restart": restart_proof, "inventory": inventory_proof, "sync": sync_proof}[sys.argv[1]]()
+    if sys.argv[1] == "command":
+        # Streaming shell commands get a wall-clock bound without swallowing their diagnostics.
+        try:
+            result = subprocess.run(sys.argv[3:], timeout=float(sys.argv[2]))
+            sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncode)
+        except subprocess.TimeoutExpired:
+            print("Command deadline exceeded: " + " ".join(sys.argv[3:]), file=sys.stderr)
+            sys.exit(124)
+    elif sys.argv[1] == "health":
+        wait_health(sys.argv[2])
+    else:
+        {"restart": restart_proof, "inventory": inventory_proof, "sync": sync_proof}[sys.argv[1]]()
