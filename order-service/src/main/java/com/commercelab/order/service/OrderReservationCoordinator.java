@@ -6,7 +6,6 @@ import com.commercelab.order.inventory.*;
 import com.commercelab.order.web.CorrelationIdFilter;
 import java.time.Clock;
 import java.util.UUID;
-import java.util.concurrent.ThreadLocalRandom;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -112,10 +111,7 @@ public class OrderReservationCoordinator {
             progress.block(id, ex.code());
             recoveryLog(id, correlation, operation, snapshot.attemptCount(), start, "BLOCKED", ex.code());
         } catch (TransientInventoryException ex) {
-            // attemptCount counts completed failed/deferred passes, not physical HTTP calls.
-            long seconds = Math.min(60, 5L << Math.min(snapshot.attemptCount(), 4));
-            progress.defer(id, ex.code(), clock.instant().plusSeconds(seconds)
-                    .plusMillis(ThreadLocalRandom.current().nextLong(251)));
+            progress.deferRecovery(id, ex.code());
             recoveryLog(id, correlation, operation, snapshot.attemptCount(), start, "PENDING_INVENTORY", ex.code());
         } finally {
             if (previous == null) MDC.remove("correlationId");

@@ -265,6 +265,29 @@ class OrderRecoveryIT extends AbstractPostgresIntegrationTest {
         verify(GATEWAY, times(3)).reserve(any(), any());
     }
 
+    @Test void concurrentTransientPassesAdvanceBackoffFromCurrentPersistedCount() throws Exception {
+        UUID id = pending();
+        NOW.set(START.plusSeconds(5));
+        var bothLoaded = new CyclicBarrier(2);
+        doAnswer(call -> {
+            outsideTransaction();
+            bothLoaded.await(10, TimeUnit.SECONDS);
+            throw new TransientInventoryException("INVENTORY_UNAVAILABLE");
+        }).when(GATEWAY).find(eq(id), any());
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = pool.submit(worker::runOnce);
+            var second = pool.submit(worker::runOnce);
+            first.get(15, TimeUnit.SECONDS);
+            second.get(15, TimeUnit.SECONDS);
+        }
+        assertThat(progress.load(id).attemptCount()).isEqualTo(2);
+        Instant due = jdbc.queryForObject("SELECT next_attempt_at FROM orders WHERE id=?",
+                (rs, n) -> rs.getTimestamp(1).toInstant(), id);
+        assertThat(due).isBetween(NOW.get().plusSeconds(10), NOW.get().plusMillis(10250));
+        verify(GATEWAY, times(2)).find(eq(id), any());
+        verify(GATEWAY, never()).reserve(any(), any());
+    }
+
     @Test void callerTransactionIsRejectedBeforeAnyGatewayEntry() {
         UUID id = pending();
         var tx = new TransactionTemplate(context.getBean(PlatformTransactionManager.class));

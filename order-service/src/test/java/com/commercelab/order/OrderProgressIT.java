@@ -255,4 +255,50 @@ class OrderProgressIT extends AbstractPostgresIntegrationTest {
         assertThat(transactions).hasSize(3).doesNotHaveDuplicates();
         assertThat(jdbc.queryForObject("SELECT version FROM orders WHERE id = ?", Long.class, id)).isEqualTo(1L);
     }
+
+    @Test
+    void recoveryDeferralsRecalculateAfterForcedOptimisticRollback() throws Exception {
+        UUID id = pending();
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        AtomicInteger reads = new AtomicInteger();
+        List<Long> transactions = new CopyOnWriteArrayList<>();
+        doAnswer(call -> {
+            var result = selectOrder(id);
+            transactions.add(jdbc.queryForObject("SELECT txid_current()", Long.class));
+            if (reads.incrementAndGet() <= 2) barrier.await(10, TimeUnit.SECONDS);
+            return result;
+        }).when(orders).findByIdWithLines(id);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() -> progress.deferRecovery(id, "TIMEOUT"));
+            var second = executor.submit(() -> progress.deferRecovery(id, "TIMEOUT"));
+            first.get(20, TimeUnit.SECONDS);
+            second.get(20, TimeUnit.SECONDS);
+        }
+        assertThat(transactions).hasSize(3).doesNotHaveDuplicates();
+        var state = jdbc.queryForMap("SELECT attempt_count, next_attempt_at, version FROM orders WHERE id = ?", id);
+        assertThat(state.get("attempt_count")).isEqualTo(2);
+        assertThat(state.get("version")).isEqualTo(2L);
+        assertThat(((java.sql.Timestamp) state.get("next_attempt_at")).toInstant())
+                .isBetween(NOW.plusSeconds(10), NOW.plusMillis(10250));
+    }
+
+    @Test
+    void recoveryDeferralKeepsGuardsAndExplicitRequestDeadlineUnchanged() {
+        UUID terminal = pending(), blocked = pending(), request = pending();
+        progress.apply(terminal, reserved(terminal));
+        progress.block(blocked, "PAYLOAD_CONFLICT");
+        for (UUID id : List.of(terminal, blocked)) {
+            var before = jdbc.queryForMap("SELECT * FROM orders WHERE id = ?", id);
+            progress.deferRecovery(id, "TIMEOUT");
+            assertThat(jdbc.queryForMap("SELECT * FROM orders WHERE id = ?", id)).isEqualTo(before);
+        }
+        progress.deferRecovery(request, "TIMEOUT");
+        progress.defer(request, "TIMEOUT", NOW.plusSeconds(5));
+        assertThat(progress.load(request).attemptCount()).isEqualTo(2);
+        Instant due = jdbc.queryForObject("SELECT next_attempt_at FROM orders WHERE id = ?",
+                (rs, n) -> rs.getTimestamp(1).toInstant(), request);
+        assertThat(due).isEqualTo(NOW.plusSeconds(5));
+        assertThatThrownBy(() -> progress.deferRecovery(request, "remote body: private"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }

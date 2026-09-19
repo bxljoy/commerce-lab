@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Consumer;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.domain.PageRequest;
@@ -62,6 +63,17 @@ public class OrderProgressService {
         requireStableCode(failureCode);
         Objects.requireNonNull(nextAttempt, "nextAttempt");
         update(id, order -> order.defer(failureCode, nextAttempt, clock.instant()));
+    }
+
+    public void deferRecovery(UUID id, String failureCode) {
+        requireStableCode(failureCode);
+        update(id, order -> {
+            // Recompute from the managed row on every optimistic retry, not the pre-HTTP snapshot.
+            long seconds = Math.min(60, 5L << Math.min(order.getAttemptCount(), 4));
+            Instant now = clock.instant();
+            order.defer(failureCode, now.plusSeconds(seconds)
+                    .plusMillis(ThreadLocalRandom.current().nextLong(251)), now);
+        });
     }
 
     public void block(UUID id, String issueCode) {
