@@ -44,7 +44,9 @@ public class OrderReservationCoordinator {
                         InventoryResponseValidation.requireMatch(request, reserved.orderId(), reserved.lines());
                     } else if (outcome instanceof InventoryOutcome.Released) {
                         throw new InventoryProtocolException("INVENTORY_RELEASED");
-                    } else if (!(outcome instanceof InventoryOutcome.Rejected)) {
+                    } else if (outcome instanceof InventoryOutcome.Rejected rejected) {
+                        InventoryResponseValidation.requireValidRejection(request, rejected.unavailable());
+                    } else {
                         throw new InventoryProtocolException("INVENTORY_INVALID_RESPONSE");
                     }
                     Order order = progress.apply(id, outcome);
@@ -102,7 +104,9 @@ public class OrderReservationCoordinator {
                 InventoryResponseValidation.requireMatch(request, reserved.orderId(), reserved.lines());
             } else if (outcome instanceof InventoryOutcome.Released) {
                 throw new InventoryProtocolException("INVENTORY_RELEASED");
-            } else if (!(outcome instanceof InventoryOutcome.Rejected)) {
+            } else if (outcome instanceof InventoryOutcome.Rejected rejected) {
+                InventoryResponseValidation.requireValidRejection(request, rejected.unavailable());
+            } else {
                 throw new InventoryProtocolException("INVENTORY_INVALID_RESPONSE");
             }
             Order order = progress.apply(id, outcome);

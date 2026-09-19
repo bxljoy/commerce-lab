@@ -118,6 +118,57 @@ class OrderRecoveryIT extends AbstractPostgresIntegrationTest {
         assertThat(progress.load(id).order().status()).isEqualTo(OrderStatus.PENDING_INVENTORY);
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "{\"B\":{\"requested\":2,\"available\":0}}",
+            "{\"A\":{\"requested\":3,\"available\":0}}",
+            "{}", "{\"A\":{\"requested\":2,\"available\":2}}",
+            "{\"A\":{\"requested\":\"2\",\"available\":0}}"})
+    void invalidRejectedGetStaysPendingAndBlockedWithoutPost(String shortages) {
+        UUID id = pending();
+        var builder = org.springframework.web.client.RestClient.builder();
+        var server = org.springframework.test.web.client.MockRestServiceServer.bindTo(builder).build();
+        var gateway = new RestInventoryGateway(builder.build(), new com.fasterxml.jackson.databind.ObjectMapper(),
+                new InventoryClientConfiguration().inventoryCircuitBreaker());
+        String body = "{\"type\":\"https://commerce-lab/errors/stock-unavailable\",\"unavailableSkus\":" + shortages + "}";
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo("/api/v1/reservations"))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.method(org.springframework.http.HttpMethod.POST))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withStatus(org.springframework.http.HttpStatus.CONFLICT)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).body(body));
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo("/api/v1/reservations/" + id))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.method(org.springframework.http.HttpMethod.GET))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withStatus(org.springframework.http.HttpStatus.CONFLICT)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).body(body));
+        assertThatThrownBy(() -> gateway.reserve(new InventoryRequest(id, reserved(id).lines()), "origin:recovery"))
+                .isInstanceOf(InventoryProtocolException.class);
+        var recovery = new OrderReservationCoordinator(progress, gateway, context.getBean(Clock.class));
+        recovery.reconcile(id);
+        assertThat(progress.load(id).order().status()).isEqualTo(OrderStatus.PENDING_INVENTORY);
+        assertThat(progress.load(id).order().rejectionReason()).isNull();
+        assertThat(progress.load(id).order().recoveryIssue()).isEqualTo("INVENTORY_INVALID_RESPONSE");
+        assertThat(jdbc.queryForObject("SELECT recovery_blocked FROM orders WHERE id=?", Boolean.class, id)).isTrue();
+        recovery.reconcile(id);
+        server.verify();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"A", "UNKNOWN"})
+    void requestedShortageSubsetRemainsDefinitive(String sku) {
+        UUID id = creation.createOrReplay(UUID.randomUUID().toString(), new PlaceOrderCommand("customer", "EUR",
+                List.of(new PlaceOrderCommand.Line(sku, 2, BigDecimal.ONE),
+                        new PlaceOrderCommand.Line("B", 1, BigDecimal.ONE))), "origin:recovery").order().id();
+        doReturn(new InventoryOutcome.Rejected(Map.of(sku, new StockShortage(2, 0))))
+                .when(GATEWAY).find(eq(id), any());
+        coordinator.reconcile(id);
+        assertThat(progress.load(id).order().status()).isEqualTo(OrderStatus.REJECTED);
+        assertThat(progress.load(id).order().rejectionReason()).isEqualTo("STOCK_UNAVAILABLE");
+        assertThat(progress.load(id).order().recoveryIssue()).isNull();
+        assertThat(jdbc.queryForObject("SELECT recovery_blocked FROM orders WHERE id=?", Boolean.class, id)).isFalse();
+        verify(GATEWAY, never()).reserve(any(), any());
+    }
+
     @Test void protocolReleasedAndMismatchesBlockAndFreshLoadSkipsBlockedTerminalAndLegacy() {
         var outcomes = List.of(new InventoryOutcome.Released(UUID.randomUUID(), reserved(UUID.randomUUID()).lines()),
                 reserved(UUID.randomUUID()), new InventoryOutcome.Reserved(UUID.randomUUID(), List.of(new InventoryLine("B", 2))));
@@ -332,15 +383,18 @@ class OrderRecoveryIT extends AbstractPostgresIntegrationTest {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
-    void lateRecoveryFailureCannotOverwriteRequestFinalization(boolean protocol) throws Exception {
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"transient", "protocol", "mismatched-rejection"})
+    void lateRecoveryFailureCannotOverwriteRequestFinalization(String failure) throws Exception {
         UUID id = pending();
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         doAnswer(call -> {
             outsideTransaction(); entered.countDown();
             assertThat(release.await(10, TimeUnit.SECONDS)).isTrue();
-            if (protocol) throw new InventoryProtocolException("INVENTORY_RELEASED");
+            if (failure.equals("mismatched-rejection")) {
+                return new InventoryOutcome.Rejected(Map.of("B", new StockShortage(2, 0)));
+            }
+            if (failure.equals("protocol")) throw new InventoryProtocolException("INVENTORY_RELEASED");
             throw new TransientInventoryException("INVENTORY_UNAVAILABLE");
         }).when(GATEWAY).find(eq(id), any());
         try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {

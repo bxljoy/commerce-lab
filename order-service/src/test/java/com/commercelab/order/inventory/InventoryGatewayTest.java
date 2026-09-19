@@ -172,11 +172,21 @@ class InventoryGatewayTest {
     @ParameterizedTest @ValueSource(strings = {"{}", "null", "[]",
             "{\"A\":{\"requested\":\"2\",\"available\":0}}",
             "{\"A\":{\"requested\":2,\"available\":2}}",
+            "{\"A\":{\"requested\":3,\"available\":0}}",
             "{\"B\":{\"requested\":2,\"available\":0}}"})
     void malformedBusinessOutcomeDoesNotReject(String shortages) {
         status = 409;
         body = "{\"type\":\"https://commerce-lab/errors/stock-unavailable\",\"unavailableSkus\":" + shortages + "}";
         assertThatThrownBy(() -> gateway.reserve(request, "c")).isInstanceOf(InventoryProtocolException.class);
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"A", "UNKNOWN"})
+    void acceptsRequestedShortageSubset(String sku) {
+        status = 409; body = rejection().replace("\"A\"", "\"" + sku + "\"");
+        var two = new InventoryRequest(id, List.of(new InventoryLine(sku, 2), new InventoryLine("B", 1)));
+        var expected = new InventoryOutcome.Rejected(java.util.Map.of(sku, new StockShortage(2, 0)));
+        assertThat(gateway.reserve(two, "c")).isEqualTo(expected);
+        assertThat(gateway.find(id, "c")).isEqualTo(expected);
     }
 
     @Test void acceptsEquivalentReorderedLines() {

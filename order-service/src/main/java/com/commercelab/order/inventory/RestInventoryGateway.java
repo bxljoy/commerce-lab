@@ -125,15 +125,13 @@ public class RestInventoryGateway implements InventoryGateway {
         JsonNode unavailable = body.path("unavailableSkus");
         if (!unavailable.isObject() || unavailable.isEmpty()) throw invalid();
         var shortages = new HashMap<String, StockShortage>();
-        var expected = request == null ? null : InventoryResponseValidation.lineMap(request.lines());
         unavailable.fields().forEachRemaining(entry -> {
             String sku = entry.getKey();
             int requested = integer(entry.getValue(), "requested", 1);
             int available = integer(entry.getValue(), "available", 0);
-            if (sku.isBlank() || sku.length() > 64 || available >= requested
-                    || (expected != null && !Integer.valueOf(requested).equals(expected.get(sku)))) throw invalid();
             shortages.put(sku, new StockShortage(requested, available));
         });
+        InventoryResponseValidation.requireValidRejection(request, shortages);
         return new InventoryOutcome.Rejected(shortages);
     }
 

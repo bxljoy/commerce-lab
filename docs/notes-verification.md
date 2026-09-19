@@ -144,8 +144,9 @@ retries, and uncertain-outcome recovery remain Phase 3B work.
 Binding [design](superpowers/specs/2026-09-19-phase-3b-sync-integration-design.md)
 and [ADR-0007](adr/0007-synchronous-reservation-and-recovery.md).
 
-Fresh local `make verify` on 2026-09-19: **228 passed, 0 failures/errors/skips**.
-Order: 79 Surefire + 65 Failsafe = 144. Inventory: 48 Surefire + 36 Failsafe = 84.
+Fresh local `make verify` on 2026-09-19, after the final recovery-rejection fix:
+**239 passed, 0 failures/errors/skips**.
+Order: 82 Surefire + 73 Failsafe = 155. Inventory: 48 Surefire + 36 Failsafe = 84.
 Environment: macOS 26.6.2 / Apple Silicon, Amazon Corretto 21.0.5, Maven 3.9.14,
 OrbStack Docker Engine 29.4.0 (linux/arm64), Docker client 29.2.1, Compose 5.1.2,
 `postgres:16-alpine`. Built application images use the existing Temurin 21 Dockerfiles
@@ -162,6 +163,7 @@ enabled recovery with fixed delay 5000 ms and batch size 20.
 | HTTP and retry sleep stay outside local DB transactions; an independent DB writer progresses during blocked HTTP | `OrderReservationIT.blockedHttpDoesNotHoldOrderRowOrCallerTransaction`, gateway-entry transaction guards in `OrderReservationIT` / `OrderRecoveryIT` | Selected request/recovery paths, not distributed atomicity |
 | Two request attempts maximum; no business retry; circuit open/half-open; transport timeout and bounded pool acquisition | `InventoryGatewayTest`, `OrderReservationIT`, `OrderRecoveryIT`, `OrderRecoveryScheduleTest` | Apache classic `responseTimeout` is socket wait, **not total wall-clock deadline**; no slow-dribble or DNS-bound proof claimed |
 | Due ordering, batch size, persisted backoff, context restart and optimistic races cannot regress terminal state | `OrderRecoveryIT`, `OrderProgressIT` | Context tests use controlled gateway outcomes; real images covered separately below |
+| Recovery rejects mismatched shortage SKU/quantity as a protocol issue, not a business rejection; valid requested subsets including unknown SKUs remain definitive | `OrderRecoveryIT.invalidRejectedGetStaysPendingAndBlockedWithoutPost`, `requestedShortageSubsetRemainsDefinitive`, `lateRecoveryFailureCannotOverwriteRequestFinalization`, `InventoryGatewayTest` | Real decoder with controlled HTTP responses and PostgreSQL state assertions; malformed/mismatched GET leaves pending, blocked, stable issue, and no recovery POST |
 | Producer contracts match consumer-owned fixtures and reject required-field/type mutations | `InventoryConsumerContractIT`, `OrderPublicContractIT`, both `InventoryContractTest` classes | Selected contracts, not complete OpenAPI conformance or regenerated-mock evidence |
 | Legacy PLACED excluded; migration backfill agrees with Java canonical content and preserves reservation line order/states | `FlywayMigrationIT`, `InventoryMigrationIT`, `OrderRecoveryIT` | Phase 3A fixtures, not mixed-version rolling deployment |
 | Correlation echo/propagation/persistence and MDC cleanup | Both `CorrelationIdFilterTest` classes, `InventoryGatewayTest`, `OrderReservationIT` | Structured local logs; no distributed trace backend claim |
@@ -176,12 +178,22 @@ automatic repair of corruption or manual cross-service interference is not claim
 
 Runtime evidence on the same host (all commands exit 0):
 
+The latest `make verify-sync-recovery` ran once after the final fix's full Java
+green, rebuilding the changed order image
+`sha256:a51a68bd593c39312d762c248b72c4a0a421e45ae1d9f0dd8b478b8cd5be85bd`.
+Project `commerce-sync-commerce-proof-x4hi9bcs` verified zero owned containers,
+networks and volumes on teardown. The isolated restart/inventory and deliberate
+failure-cleanup evidence below remains from the image build preceding this narrow fix;
+those unchanged checks were not repeated. The earlier successful sync proof used
+response-loss ID `532815c4-22d1-4ec3-b3de-8bdc779937ee` and pre-attempt fixture ID
+`d7e2af3e-d042-444a-9aff-b6d9303402e5`; the table records the latest fixed-image IDs.
+
 | Command | Actual observation | Boundary / limit |
 |---|---|---|
 | `make verify-restart` | Only order + its DB; pending ID `23c791bc-ad48-48a7-8f8b-cefd38d2b259` survives restart; EUR 17.9999 and line sequence unchanged | Inventory deliberately unavailable at loopback port 1; not host/DB restart |
 | `make verify-inventory-image` | New reserve 201, matching replay 200, GET reserved 200/rejected 409/missing 404; two releases and released replay restore exact stock 10/5 | Independent inventory image with real PostgreSQL |
-| `make verify-sync-recovery` response loss | Exactly **2** real successful responses discarded, upstream **201 then 200**; order `532815c4-22d1-4ec3-b3de-8bdc779937ee` pending before/after restart, then same ID CONFIRMED; APPLE/BANANA **10/5 -> 8/4 -> 8/4** | Proxy reads producer success completely before closing downstream socket; recovery GETs return proxy 503 until restored. Restart occurs after remote commit/before local terminal recording, not an instruction-level process-kill hook |
-| `make verify-sync-recovery` pre-attempt state | Controlled pending ID `d7e2af3e-d042-444a-9aff-b6d9303402e5`, attempt_count 0, inventory GET 404; startup recovery GET404 + POST201, same ID CONFIRMED; stock **8/4 -> 7/4** | **DB fixture inserted while order is stopped**, not an HTTP crash injection before the first attempt |
+| `make verify-sync-recovery` response loss | Exactly **2** real successful responses discarded, upstream **201 then 200**; order `e2f7fb01-8950-46cf-b522-c326baf71b34` pending before/after restart, then same ID CONFIRMED; APPLE/BANANA **10/5 -> 8/4 -> 8/4** | Proxy reads producer success completely before closing downstream socket; recovery GETs return proxy 503 until restored. Restart occurs after remote commit/before local terminal recording, not an instruction-level process-kill hook |
+| `make verify-sync-recovery` pre-attempt state | Controlled pending ID `22e761cf-6af3-4efe-a776-f8d3f5f6b55d`, attempt_count 0, inventory GET 404; startup recovery GET404 + POST201, same ID CONFIRMED; stock **8/4 -> 7/4** | **DB fixture inserted while order is stopped**, not an HTTP crash injection before the first attempt |
 | `make verify-sync-recovery` deployment/normal path | Live app-to-app DNS/HTTP works; DBs absent from shared network; new orders return 201 CONFIRMED/REJECTED and replay 200 | Separate terminal smoke after fault checkpoints; confirmation changes stock to 7/3, rejection/replays leave it unchanged |
 
 The scripts report unique project names and verify zero owned containers (including
@@ -190,7 +202,7 @@ runs for all three scripts must return 97; a cleanup error instead returns failu
 Initial harness failures also exercised cleanup: chunked client bodies required
 explicit proxy decoding, and ephemeral host ports required re-discovery after restart.
 Both were fixed and the image proofs rerun. Two additional stdlib proxy framing
-tests pass, separate from the 228 Maven tests. Cleanup cannot be guaranteed after
+tests pass, separate from the 239 Maven tests. Cleanup cannot be guaranteed after
 SIGKILL, host loss or an unavailable Docker daemon; no global prune is used.
 
 Hosted CI has the new runtime and deliberate failure-cleanup steps but **remains
