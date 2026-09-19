@@ -119,7 +119,7 @@ public class OutboxRelay {
     private String correlationId(OutboxMessage message) {
         try {
             String id = mapper.readTree(message.payload()).path("correlationId").asText();
-            return id.matches("[A-Za-z0-9._-]{1,128}") ? id : "unknown";
+            return id.matches("[A-Za-z0-9._:-]{1,128}") ? id : "unknown";
         } catch (com.fasterxml.jackson.core.JsonProcessingException | RuntimeException ex) {
             return "unknown";
         }

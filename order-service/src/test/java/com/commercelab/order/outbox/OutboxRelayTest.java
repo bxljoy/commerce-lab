@@ -18,6 +18,8 @@ import java.util.concurrent.TimeoutException;
 import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -211,6 +213,33 @@ class OutboxRelayTest {
             assertThat(logs).contains(claim.message().eventId().toString(), claim.message().orderId().toString(),
                     "test-correlation", "attempt=3", "latencyMs=", "SEND_FAILED", "outcome=").doesNotContain("DO_NOT_LOG");
             assertThat(appender.list).allSatisfy(e -> assertThat(e.getThrowableProxy()).isNull());
+        } finally { logger.detachAppender(appender); appender.stop(); }
+    }
+
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', value = {
+            "{\"correlationId\":\"checkout:123\"}|checkout:123",
+            "{\"correlationId\":\"bad id\"}|unknown",
+            "{\"correlationId\":\"\"}|unknown",
+            "{}|unknown",
+            "not-json|unknown"
+    })
+    void storedCorrelationIdIsPreservedOrUnknownInMdcAndLogs(String payload, String expected) {
+        var stored = new OutboxMessage(claim.message().eventId(), claim.message().orderId(),
+                claim.message().topic(), claim.message().messageKey(), payload);
+        when(store.claimNext(any())).thenReturn(Optional.of(new OutboxClaim(stored, claim.token(), 3)));
+        when(store.markDelivered(any(), any())).thenReturn(true);
+        Logger logger = (Logger) LoggerFactory.getLogger(OutboxRelay.class);
+        var appender = new ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            assertThat(relay(message -> {
+                assertThat(MDC.get("correlationId")).isEqualTo(expected);
+                assertThat(message.payload()).isEqualTo(payload);
+            }, m -> {}, 1).runOnce()).isEqualTo(1);
+            assertThat(appender.list).singleElement().satisfies(event ->
+                    assertThat(event.getFormattedMessage()).contains("correlationId=" + expected + " ", "outcome=delivered"));
         } finally { logger.detachAppender(appender); appender.stop(); }
     }
 
