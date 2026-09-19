@@ -14,14 +14,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.commercelab.inventory.domain.Availability;
 import com.commercelab.inventory.domain.InvalidReservationException;
 import com.commercelab.inventory.domain.Reservation;
-import com.commercelab.inventory.domain.ReservationAlreadyExistsException;
+import com.commercelab.inventory.domain.ReservationPayloadConflictException;
 import com.commercelab.inventory.domain.ReservationLine;
 import com.commercelab.inventory.domain.ReservationNotFoundException;
 import com.commercelab.inventory.domain.ReservationStatus;
 import com.commercelab.inventory.domain.StockItem;
 import com.commercelab.inventory.domain.StockNotFoundException;
-import com.commercelab.inventory.domain.StockUnavailableException;
 import com.commercelab.inventory.service.InventoryService;
+import com.commercelab.inventory.service.ReservationAttemptResult;
 import com.commercelab.inventory.service.ReserveInventoryCommand;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -55,7 +55,7 @@ class InventoryApiControllerTest {
                                 && command.lines().equals(List.of(
                                         new ReserveInventoryCommand.Line("SKU-BANANA", 2),
                                         new ReserveInventoryCommand.Line("SKU-APPLE", 1))))))
-                .thenReturn(reserved());
+                .thenReturn(new ReservationAttemptResult.Accepted(reserved(), true));
 
         mockMvc.perform(post("/api/v1/reservations")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -124,7 +124,8 @@ class InventoryApiControllerTest {
 
     @Test
     void getReservationReturns200WithMappedFieldsAndLinesInOriginalOrder() throws Exception {
-        when(inventoryService.getReservation(ORDER_ID)).thenReturn(reserved());
+        when(inventoryService.getAttempt(ORDER_ID))
+                .thenReturn(new ReservationAttemptResult.Accepted(reserved(), false));
 
         mockMvc.perform(get("/api/v1/reservations/{orderId}", ORDER_ID))
                 .andExpect(status().isOk())
@@ -141,7 +142,7 @@ class InventoryApiControllerTest {
 
     @Test
     void missingReservationReturnsReservationNotFoundProblem() throws Exception {
-        when(inventoryService.getReservation(ORDER_ID))
+        when(inventoryService.getAttempt(ORDER_ID))
                 .thenThrow(new ReservationNotFoundException(ORDER_ID));
 
         mockMvc.perform(get("/api/v1/reservations/{orderId}", ORDER_ID))
@@ -167,7 +168,7 @@ class InventoryApiControllerTest {
         Map<String, Availability> unavailable = new LinkedHashMap<>();
         unavailable.put("SKU-BANANA", new Availability(7, 5));
         unavailable.put("SKU-UNKNOWN", new Availability(2, 0));
-        when(inventoryService.reserve(any())).thenThrow(new StockUnavailableException(unavailable));
+        when(inventoryService.reserve(any())).thenReturn(new ReservationAttemptResult.Rejected(unavailable));
 
         mockMvc.perform(post("/api/v1/reservations")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -182,9 +183,9 @@ class InventoryApiControllerTest {
     }
 
     @Test
-    void existingReservationReturnsConflict() throws Exception {
+    void changedPayloadReturnsConflict() throws Exception {
         when(inventoryService.reserve(any()))
-                .thenThrow(new ReservationAlreadyExistsException(ORDER_ID));
+                .thenThrow(new ReservationPayloadConflictException(ORDER_ID));
 
         mockMvc.perform(post("/api/v1/reservations")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -192,7 +193,7 @@ class InventoryApiControllerTest {
                 .andExpect(status().isConflict())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.type")
-                        .value("https://commerce-lab/errors/reservation-already-exists"));
+                        .value("https://commerce-lab/errors/reservation-payload-conflict"));
     }
 
     @Test

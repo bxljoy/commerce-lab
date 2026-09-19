@@ -17,6 +17,10 @@ paths:
       tags: [inventory]
       operationId: reserveInventory
       summary: Reserve stock for an order
+      description: >-
+        One lifetime attempt per orderId. Reordered identical SKU/quantity lines replay
+        the stored decision. Successful replay returns the current reservation, including
+        RELEASED, without reserving again. Rejections retain their original availability snapshot.
       requestBody:
         required: true
         content:
@@ -24,6 +28,17 @@ paths:
             schema:
               $ref: '#/components/schemas/ReserveInventoryRequest'
       responses:
+        '200':
+          description: Matching successful attempt replayed (RESERVED or RELEASED)
+          headers:
+            Location:
+              description: Canonical URI of the reservation.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationResponse'
         '201':
           description: Stock reserved
           headers:
@@ -44,7 +59,7 @@ paths:
     get:
       tags: [inventory]
       operationId: getReservation
-      summary: Retrieve a reservation by order id
+      summary: Retrieve a reservation attempt by order id
       parameters:
         - $ref: '#/components/parameters/OrderId'
       responses:
@@ -56,6 +71,8 @@ paths:
                 $ref: '#/components/schemas/ReservationResponse'
         '404':
           $ref: '#/components/responses/ReservationNotFound'
+        '409':
+          $ref: '#/components/responses/StockUnavailable'
 
   /api/v1/reservations/{orderId}/release:
     put:
@@ -111,25 +128,56 @@ components:
 
   responses:
     InvalidReservation:
-      description: Invalid reservation request
+      description: >-
+        Invalid request; no attempt is persisted. Problem type is
+        https://commerce-lab/errors/invalid-reservation for domain validation or
+        https://commerce-lab/errors/validation with an errors field-message map for bean validation.
       content:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/ProblemDetail'
     ReservationConflict:
-      description: Stock unavailable or reservation already exists
+      description: >-
+        Stored stock rejection (stock-unavailable, with unavailableSkus) or a valid
+        payload differing from the lifetime attempt (reservation-payload-conflict).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          examples:
+            stockUnavailable:
+              value:
+                type: https://commerce-lab/errors/stock-unavailable
+                title: Stock unavailable
+                status: 409
+                detail: 'stock unavailable for SKUs: [SKU-APPLE]'
+                unavailableSkus:
+                  SKU-APPLE: {requested: 12, available: 10}
+            payloadConflict:
+              value:
+                type: https://commerce-lab/errors/reservation-payload-conflict
+                title: Reservation payload conflict
+                status: 409
+                detail: Reservation attempt payload differs for this order.
+    StockUnavailable:
+      description: >-
+        Previously committed rejection. Type is https://commerce-lab/errors/stock-unavailable;
+        unavailableSkus contains the original requested and available quantities, including
+        available zero for unknown SKUs, regardless of current stock.
       content:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/ProblemDetail'
     ReservationNotFound:
-      description: Reservation not found
+      description: >-
+        No committed attempt exists (or no successful reservation exists for release).
+        Type is https://commerce-lab/errors/reservation-not-found.
       content:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/ProblemDetail'
     StockNotFound:
-      description: Stock not found
+      description: Stock not found; type is https://commerce-lab/errors/stock-not-found.
       content:
         application/problem+json:
           schema:

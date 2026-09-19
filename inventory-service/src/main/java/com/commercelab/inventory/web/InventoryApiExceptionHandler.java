@@ -2,6 +2,7 @@ package com.commercelab.inventory.web;
 
 import com.commercelab.inventory.domain.InvalidReservationException;
 import com.commercelab.inventory.domain.ReservationAlreadyExistsException;
+import com.commercelab.inventory.domain.ReservationPayloadConflictException;
 import com.commercelab.inventory.domain.ReservationNotFoundException;
 import com.commercelab.inventory.domain.StockNotFoundException;
 import com.commercelab.inventory.domain.StockUnavailableException;
@@ -25,6 +26,12 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 public class InventoryApiExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static final String TYPE_BASE = "https://commerce-lab/errors/";
+
+    @ExceptionHandler(ReservationPayloadConflictException.class)
+    public ProblemDetail handlePayloadConflict(ReservationPayloadConflictException exception) {
+        return problem(HttpStatus.CONFLICT, "Reservation payload conflict",
+                "reservation-payload-conflict", exception.getMessage());
+    }
 
     @ExceptionHandler(InvalidReservationException.class)
     public ProblemDetail handleInvalidReservation(InvalidReservationException exception) {

@@ -8,12 +8,12 @@ import com.commercelab.inventory.AbstractPostgresIntegrationTest;
 import com.commercelab.inventory.domain.Availability;
 import com.commercelab.inventory.domain.Reservation;
 import com.commercelab.inventory.domain.ReservationAlreadyExistsException;
+import com.commercelab.inventory.domain.ReservationPayloadConflictException;
 import com.commercelab.inventory.domain.ReservationLine;
 import com.commercelab.inventory.domain.ReservationNotFoundException;
 import com.commercelab.inventory.domain.ReservationStatus;
 import com.commercelab.inventory.domain.StockItem;
 import com.commercelab.inventory.domain.StockNotFoundException;
-import com.commercelab.inventory.domain.StockUnavailableException;
 import com.commercelab.inventory.repository.StockRepository;
 import java.util.List;
 import java.util.Map;
@@ -55,7 +55,7 @@ class InventoryReservationIT extends AbstractPostgresIntegrationTest {
         jdbcTemplate.execute(
                 "ALTER TABLE inventory_reservations DROP CONSTRAINT IF EXISTS task_4_other_integrity");
         jdbcTemplate.execute(
-                "TRUNCATE TABLE inventory_reservation_lines, inventory_reservations, stock CASCADE");
+                "TRUNCATE TABLE inventory_reservation_attempts, inventory_reservation_lines, inventory_reservations, stock CASCADE");
         executor = Executors.newFixedThreadPool(3);
     }
 
@@ -71,8 +71,8 @@ class InventoryReservationIT extends AbstractPostgresIntegrationTest {
         insertStock("SKU-B", 3);
         UUID orderId = UUID.randomUUID();
 
-        Reservation reservation = service.reserve(command(orderId,
-                line("SKU-B", 2), line("SKU-A", 1)));
+        Reservation reservation = ((ReservationAttemptResult.Accepted) service.reserve(command(orderId,
+                line("SKU-B", 2), line("SKU-A", 1)))).reservation();
 
         assertThat(reservation.orderId()).isEqualTo(orderId);
         assertThat(reservation.lines()).containsExactly(
@@ -84,14 +84,14 @@ class InventoryReservationIT extends AbstractPostgresIntegrationTest {
     }
 
     @Test
-    void insufficientSecondSkuRollsBackEveryChange() {
+    void insufficientSecondSkuCommitsRejectionWithoutStockChanges() {
         insertStock("SKU-A", 5);
         insertStock("SKU-B", 1);
         UUID orderId = UUID.randomUUID();
 
-        assertThatThrownBy(() -> service.reserve(command(orderId,
+        assertThat(service.reserve(command(orderId,
                 line("SKU-A", 2), line("SKU-B", 2))))
-                .isInstanceOf(StockUnavailableException.class);
+                .isInstanceOf(ReservationAttemptResult.Rejected.class);
 
         assertThat(available("SKU-A")).isEqualTo(5);
         assertThat(available("SKU-B")).isEqualTo(1);
@@ -104,17 +104,17 @@ class InventoryReservationIT extends AbstractPostgresIntegrationTest {
         insertStock("SKU-B", 2);
         insertStock("SKU-OK", 5);
 
-        assertThatThrownBy(() -> service.reserve(command(UUID.randomUUID(),
+        assertThat(service.reserve(command(UUID.randomUUID(),
                 line("SKU-OK", 5),
                 line("SKU-B", 3),
                 line("SKU-UNKNOWN", 4),
                 line("SKU-A", 2))))
-                .isInstanceOfSatisfying(StockUnavailableException.class, exception -> {
-                    assertThat(exception.unavailableSkus()).containsExactly(
+                .isInstanceOfSatisfying(ReservationAttemptResult.Rejected.class, rejection -> {
+                    assertThat(rejection.unavailable()).containsExactly(
                             Map.entry("SKU-B", new Availability(3, 2)),
                             Map.entry("SKU-UNKNOWN", new Availability(4, 0)),
                             Map.entry("SKU-A", new Availability(2, 1)));
-                    assertThatThrownBy(() -> exception.unavailableSkus()
+                    assertThatThrownBy(() -> rejection.unavailable()
                             .put("SKU-X", new Availability(1, 0)))
                             .isInstanceOf(UnsupportedOperationException.class);
                 });
@@ -126,13 +126,13 @@ class InventoryReservationIT extends AbstractPostgresIntegrationTest {
     }
 
     @Test
-    void existingOrderIdIsAlwaysAConflictWithoutChangingStockAgain() {
+    void existingOrderIdWithChangedQuantityConflictsWithoutChangingStockAgain() {
         insertStock("SKU-A", 3);
         UUID orderId = UUID.randomUUID();
         service.reserve(command(orderId, line("SKU-A", 1)));
 
         assertThatThrownBy(() -> service.reserve(command(orderId, line("SKU-A", 2))))
-                .isInstanceOf(ReservationAlreadyExistsException.class);
+                .isInstanceOf(ReservationPayloadConflictException.class);
 
         assertThat(available("SKU-A")).isEqualTo(2);
         assertThat(reservationCount(orderId)).isOne();
@@ -173,7 +173,7 @@ class InventoryReservationIT extends AbstractPostgresIntegrationTest {
     }
 
     @Test
-    void concurrentSameOrderPrimaryKeyViolationBecomesDuplicateConflictAndRollsBackStock()
+    void concurrentSameOrderWaitsForClaimAndReplaysWithoutChangingStockAgain()
             throws Exception {
         insertStock("SKU-A", 2);
         CountDownLatch stockLockHeld = new CountDownLatch(1);
@@ -199,7 +199,7 @@ class InventoryReservationIT extends AbstractPostgresIntegrationTest {
 
         assertThat(blocker.get(10, SECONDS)).isNull();
         assertThat(List.of(first.get(10, SECONDS), second.get(10, SECONDS)))
-                .containsExactlyInAnyOrder(Outcome.RESERVED, Outcome.DUPLICATE);
+                .containsExactlyInAnyOrder(Outcome.RESERVED, Outcome.RESERVED);
         assertThat(available("SKU-A")).isOne();
         assertThat(reservationCount(orderId)).isOne();
     }
@@ -224,6 +224,9 @@ class InventoryReservationIT extends AbstractPostgresIntegrationTest {
 
         assertThat(available("SKU-A")).isEqualTo(2);
         assertThat(reservationCount(orderId)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM inventory_reservation_attempts WHERE order_id = ?",
+                Integer.class, orderId)).isZero();
     }
 
     @Test
@@ -299,14 +302,8 @@ class InventoryReservationIT extends AbstractPostgresIntegrationTest {
             CyclicBarrier start, UUID orderId, ReserveInventoryCommand.Line... lines) {
         return executor.submit(() -> {
             await(start);
-            try {
-                service.reserve(command(orderId, lines));
-                return Outcome.RESERVED;
-            } catch (StockUnavailableException exception) {
-                return Outcome.UNAVAILABLE;
-            } catch (ReservationAlreadyExistsException exception) {
-                return Outcome.DUPLICATE;
-            }
+            return service.reserve(command(orderId, lines)) instanceof ReservationAttemptResult.Accepted
+                    ? Outcome.RESERVED : Outcome.UNAVAILABLE;
         });
     }
 
@@ -390,7 +387,6 @@ class InventoryReservationIT extends AbstractPostgresIntegrationTest {
 
     private enum Outcome {
         RESERVED,
-        UNAVAILABLE,
-        DUPLICATE
+        UNAVAILABLE
     }
 }

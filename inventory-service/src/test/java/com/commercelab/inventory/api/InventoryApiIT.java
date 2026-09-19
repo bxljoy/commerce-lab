@@ -31,7 +31,7 @@ class InventoryApiIT extends AbstractPostgresIntegrationTest {
     @BeforeEach
     void resetDatabase() {
         jdbcTemplate.execute(
-                "TRUNCATE TABLE inventory_reservation_lines, inventory_reservations, stock CASCADE");
+                "TRUNCATE TABLE inventory_reservation_attempts, inventory_reservation_lines, inventory_reservations, stock CASCADE");
         jdbcTemplate.update(
                 "INSERT INTO stock (sku, available_quantity) VALUES (?, ?)", "SKU-APPLE", 10);
         jdbcTemplate.update(

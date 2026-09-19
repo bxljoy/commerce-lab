@@ -2,13 +2,13 @@ package com.commercelab.inventory.service;
 
 import com.commercelab.inventory.domain.Availability;
 import com.commercelab.inventory.domain.Reservation;
-import com.commercelab.inventory.domain.ReservationAlreadyExistsException;
+import com.commercelab.inventory.domain.ReservationPayloadConflictException;
 import com.commercelab.inventory.domain.ReservationLine;
 import com.commercelab.inventory.domain.ReservationNotFoundException;
 import com.commercelab.inventory.domain.ReservationStatus;
 import com.commercelab.inventory.domain.StockItem;
 import com.commercelab.inventory.domain.StockNotFoundException;
-import com.commercelab.inventory.domain.StockUnavailableException;
+import com.commercelab.inventory.persistence.ReservationAttemptStore;
 import com.commercelab.inventory.repository.ReservationRepository;
 import com.commercelab.inventory.repository.StockRepository;
 import java.time.Clock;
@@ -28,20 +28,28 @@ public class InventoryService {
     private final StockRepository stocks;
     private final ReservationRepository reservations;
     private final Clock clock;
+    private final ReservationAttemptStore attempts;
 
     public InventoryService(
-            StockRepository stocks, ReservationRepository reservations, Clock clock) {
+            StockRepository stocks, ReservationRepository reservations, Clock clock,
+            ReservationAttemptStore attempts) {
         this.stocks = stocks;
         this.reservations = reservations;
         this.clock = clock;
+        this.attempts = attempts;
     }
 
     @Transactional
-    public Reservation reserve(ReserveInventoryCommand command) {
+    public ReservationAttemptResult reserve(ReserveInventoryCommand command) {
+        ReservationPayload payload = ReservationPayload.from(command);
         Reservation candidate = Reservation.reserve(
                 command.orderId(), command.toDomainLines(), clock.instant());
-        if (reservations.existsByOrderId(command.orderId())) {
-            throw new ReservationAlreadyExistsException(command.orderId());
+        if (!attempts.claim(command.orderId(), payload, candidate.reservedAt())) {
+            var attempt = attempts.find(command.orderId()).orElseThrow();
+            if (!attempt.payload().equals(payload)) {
+                throw new ReservationPayloadConflictException(command.orderId());
+            }
+            return replay(command.orderId(), attempt);
         }
 
         List<String> skus = candidate.lines().stream()
@@ -52,7 +60,8 @@ public class InventoryService {
                 .collect(Collectors.toMap(StockItem::sku, Function.identity()));
         Map<String, Availability> unavailable = collectUnavailable(candidate.lines(), locked);
         if (!unavailable.isEmpty()) {
-            throw new StockUnavailableException(unavailable);
+            attempts.complete(command.orderId(), unavailable);
+            return new ReservationAttemptResult.Rejected(unavailable);
         }
 
         List<StockItem> updated = candidate.lines().stream()
@@ -60,7 +69,21 @@ public class InventoryService {
                 .toList();
         stocks.updateAll(updated);
         reservations.add(candidate);
-        return candidate;
+        attempts.complete(command.orderId(), Map.of());
+        return new ReservationAttemptResult.Accepted(candidate, true);
+    }
+
+    @Transactional(readOnly = true)
+    public ReservationAttemptResult getAttempt(UUID orderId) {
+        return replay(orderId, attempts.find(orderId)
+                .orElseThrow(() -> new ReservationNotFoundException(orderId)));
+    }
+
+    private ReservationAttemptResult replay(UUID orderId, ReservationAttemptStore.Attempt attempt) {
+        if ("REJECTED".equals(attempt.outcome())) {
+            return new ReservationAttemptResult.Rejected(attempt.unavailable());
+        }
+        return new ReservationAttemptResult.Accepted(getReservation(orderId), false);
     }
 
     @Transactional
