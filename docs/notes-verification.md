@@ -137,6 +137,12 @@ retries, and uncertain-outcome recovery remain Phase 3B work.
 
 ### Phase 3B: synchronous integration
 
+Design preparation (2026-09-19): [draft design](superpowers/specs/2026-09-19-phase-3b-sync-integration-design.md),
+[proposed ADR-0007](adr/0007-synchronous-reservation-and-recovery.md), and
+[implementation plan](superpowers/plans/2026-09-19-phase-3b-sync-integration.md).
+The core choices were approved in conversation; the detailed documents are ready
+for review. Implementation and the evidence below remain outstanding.
+
 - [ ] Record state transitions, public response semantics, and restart recovery in an ADR.
 - [ ] Keep RestClient calls and retries outside DB transactions; prove the boundary.
 - [ ] Enforce idempotency at order creation and inventory reservation: same key/payload
