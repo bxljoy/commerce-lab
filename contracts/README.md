@@ -57,7 +57,28 @@ mvn -f inventory-service/pom.xml -B -Dtest=InventoryContractTest -Dit.test=Inven
 This opt-in run must fail with three assertion failures. Omit the property for
 green; no fixture edits or disabled tests are needed.
 
-## Limits
+## OrderPlaced event v1
+
+`events/orders/v1/order-placed.schema.json` and `order-placed.json` define the
+accepted-and-persisted event, not inventory reservation. Destination is
+`commerce.orders.v1`; the key is the `orderId` UUID string. The creation-time
+envelope and ordered SKU/quantity snapshot exclude customer details, prices,
+request keys, and HTTP headers. Outbox storage retains the exact serialized JSON
+text; publication retries must not reconstruct it.
+
+`OrderPlacedEventTest` checks schema fields/types/constants and applies explicit
+Jackson tree assertions to both the fixture and factory output, including
+missing event ID, wrong version, and string quantity mutations. These are focused
+contract checks, not a general JSON Schema validator or Kafka publication proof.
+`OutboxMigrationIT` checks guarded upgrades, database constraints, and insertion
+in the caller's transaction with real PostgreSQL.
+
+```sh
+mvn -f order-service/pom.xml -Dtest=OrderPlacedEventTest test
+mvn -f order-service/pom.xml -Dtest=OrderPlacedEventTest -Dit.test=OutboxMigrationIT,FlywayMigrationIT verify
+```
+
+## HTTP Contract Limits
 
 This is local executable compatibility evidence, not a contract broker, exhaustive
 OpenAPI validation, deployed cross-service test, or mixed-version guarantee.

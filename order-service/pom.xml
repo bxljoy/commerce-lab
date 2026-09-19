@@ -103,6 +103,7 @@
                 <includes>
                     <include>inventory/v1/*.json</include>
                     <include>orders/v1/*.json</include>
+                    <include>events/orders/v1/*.json</include>
                 </includes>
             </testResource>
         </testResources>

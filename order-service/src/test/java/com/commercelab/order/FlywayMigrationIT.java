@@ -26,7 +26,7 @@ class FlywayMigrationIT extends AbstractPostgresIntegrationTest {
             statement.execute("INSERT INTO " + schema + ".orders (id, customer_id, status, currency, placed_at) VALUES "
                     + "(gen_random_uuid(), 'old', 'PLACED', 'EUR', '2026-01-01T00:00:00Z'),"
                     + "(gen_random_uuid(), 'pending', 'PENDING_INVENTORY', 'EUR', '2026-01-01T00:00:00Z')");
-            migrate(schema, null);
+            migrate(schema, MigrationVersion.fromVersion("4"));
             try (ResultSet rows = statement.executeQuery("SELECT status, version, attempt_count, recovery_blocked, "
                     + "next_attempt_at, placed_at FROM " + schema + ".orders ORDER BY customer_id")) {
                 assertThat(rows.next()).isTrue();

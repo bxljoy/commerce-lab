@@ -1,0 +1,12 @@
+{
+  "eventId": "ddf7e6e4-706f-4bc8-a54c-93271b8aee63",
+  "eventType": "OrderPlaced",
+  "schemaVersion": 1,
+  "occurredAt": "2026-09-19T12:34:56Z",
+  "orderId": "07e71c02-8c9e-4571-b16f-c7020e19f68c",
+  "correlationId": "phase4-proof",
+  "lines": [
+    {"sku": "SKU-B", "quantity": 2},
+    {"sku": "SKU-A", "quantity": 1}
+  ]
+}
