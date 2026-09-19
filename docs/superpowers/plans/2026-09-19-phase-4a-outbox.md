@@ -1,6 +1,6 @@
 # Phase 4A Transactional Outbox Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Prove atomic order/publication intent and recoverable, duplicate-tolerant publication through a PostgreSQL outbox and Kafka polling relay.
 
@@ -10,7 +10,9 @@
 
 **Spec:** [Approved design](../specs/2026-09-19-phase-4a-outbox-design.md).
 
-Status: Awaiting user review. No tasks below have been implemented or verified.
+Status: Approved and executed with per-task and whole-branch review on 2026-09-19.
+All local tasks complete; hosted CI awaits separately authorized publication.
+See the acceptance scoreboard for exact test counts, image evidence and limits.
 
 ## Global Constraints
 
@@ -42,12 +44,12 @@ Use these starting values, validated at startup and recorded in tests:
 | Setting | Value |
 |---|---|
 | `order.outbox.enabled` | true; false for nonrelay tests |
-| `order.outbox.poll-delay-ms` | 1000 |
+| `order.outbox.poll-interval-ms` | 1000 |
 | `order.outbox.max-attempts-per-pass` | 20 |
 | `order.outbox.lease-ms` | 60000 |
 | `order.outbox.ack-wait-ms` | 12000 |
-| `order.outbox.retry-base-ms` / `retry-max-ms` | 1000 / 60000 |
-| `order.outbox.retry-jitter-ms` | 250, added after capped base delay |
+| Retry policy base / maximum constants | 1000 / 60000 ms |
+| Retry policy jitter constant | 250 ms, added after capped base delay |
 | Kafka `max.block.ms` / `delivery.timeout.ms` | 2000 / 10000 |
 | Kafka `request.timeout.ms` / `linger.ms` | 3000 / 0 |
 | Kafka `acks` / `enable.idempotence` | all / true |
@@ -105,11 +107,11 @@ create test `outbox/OrderPlacedEventTest.java`, `outbox/OutboxMigrationIT.java`.
 **Interfaces:** Produce event factory and insert operation from the map. The insert
 participates in an existing JPA/JDBC transaction, as OrderRequestStore does.
 
-- [ ] Write migration tests using the existing isolated-schema pattern. Explicitly
+- [x] Write migration tests using the existing isolated-schema pattern. Explicitly
   target V4 in `versionFourSchedulesExistingPendingButNotHistoricalOrders` instead
   of latest. New tests: fresh schema succeeds, terminal rows unchanged, pending
   and blocked pending fail, failed upgrade preserves rows and V4 history.
-- [ ] Write event tests: UUID/key consistency, fixed Clock timestamp, only approved
+- [x] Write event tests: UUID/key consistency, fixed Clock timestamp, only approved
   fields, immutable line snapshot/order, integer quantities, missing/invalid
   correlation normalized, no customer/price/request-key fields. Add schema fixture
   tests with Jackson tree assertions for required fields/types/consts; require the
@@ -125,10 +127,10 @@ assertThat(body.has("customerId")).isFalse();
 assertThat(body.get("lines").get(0).get("quantity").isIntegralNumber()).isTrue();
 ```
 
-- [ ] Run `mvn -f order-service/pom.xml -Dtest=OrderPlacedEventTest test` and
+- [x] Run `mvn -f order-service/pom.xml -Dtest=OrderPlacedEventTest test` and
   `mvn -f order-service/pom.xml -Dtest=OrderPlacedEventTest -Dit.test=OutboxMigrationIT,FlywayMigrationIT verify`.
   Record missing schema/classes or incorrect migration failures before implementation.
-- [ ] Implement the envelope/factory and migration. Store exact serialized JSON
+- [x] Implement the envelope/factory and migration. Store exact serialized JSON
   as TEXT, with a CHECK that it parses as a JSON object; metadata columns must
   match envelope eventId/orderId/type/version. Use the existing mapper's Java time support.
 
@@ -166,10 +168,10 @@ CREATE INDEX ix_order_outbox_due
  WHERE delivered_at IS NULL;
 ```
 
-- [ ] Add contracts/events JSON test-resource include. `OrderOutboxStore.insert`
+- [x] Add contracts/events JSON test-resource include. `OrderOutboxStore.insert`
   uses parameterized JdbcTemplate INSERT and requires an active transaction;
   never reserializes an existing payload. Make insert-time envelope validation explicit.
-- [ ] Re-run both targeted commands. Gate: tests pass, V1-V4 unchanged, schema and
+- [x] Re-run both targeted commands. Gate: tests pass, V1-V4 unchanged, schema and
   example agree. Commit `feat: define order placed event and guarded outbox schema`.
 
 ## Task 2: Atomic Creation and Asynchronous API Switch
@@ -184,7 +186,7 @@ create test `outbox/OrderOutboxCreationIT.java`. Audit other order tests for new
 **Interfaces:** Consume `create(Order,String)` and `insert(OutboxMessage)` inside
 `OrderCreationService.createOrReplay`. Preserve its public signature and existing key-race detection.
 
-- [ ] Write real-Postgres tests for new HTTP202, same-ID replay, 409 conflicting
+- [x] Write real-Postgres tests for new HTTP202, same-ID replay, 409 conflicting
   reuse, concurrent same-key winners, all-three rollback, historical terminal
   replay without events, and zero inventory calls. For rollback, use a test spy
   that executes the real outbox insert then throws; a second case throws before
@@ -197,8 +199,8 @@ assertThat(jdbc.queryForObject("SELECT count(*) FROM order_requests", Long.class
 assertThat(jdbc.queryForObject("SELECT count(*) FROM order_outbox", Long.class)).isZero();
 ```
 
-- [ ] Run `mvn -f order-service/pom.xml -Dtest=OrderServiceTest,OrderApiControllerTest -Dit.test=OrderOutboxCreationIT,OrderIdempotencyIT verify`; record red assertions.
-- [ ] Insert the event immediately after request identity in the existing transaction:
+- [x] Run `mvn -f order-service/pom.xml -Dtest=OrderServiceTest,OrderApiControllerTest -Dit.test=OrderOutboxCreationIT,OrderIdempotencyIT verify`; record red assertions.
+- [x] Insert the event immediately after request identity in the existing transaction:
 
 ```java
 Order order = orders.add(Order.place(payload.customerId(), payload.lines(), clock.instant()));
@@ -208,7 +210,7 @@ return new OrderCreation(order, true);
 // OrderService.placeOrder now returns creation.createOrReplay(...) directly.
 ```
 
-- [ ] Remove the active synchronous path: `service/OrderReservationCoordinator.java`,
+- [x] Remove the active synchronous path: `service/OrderReservationCoordinator.java`,
   `OrderRecoveryWorker.java`, `OrderRecoveryConfiguration.java`, `OrderProgressService.java`,
   `PendingOrderSnapshot.java`, and the production `inventory/` package. Remove their
   exclusive tests: `OrderReservationIT`, `OrderRecoveryIT`, `OrderProgressIT`,
@@ -216,12 +218,12 @@ return new OrderCreation(order, true);
   inventory producer contract tests/fixtures, historical domain states and migrations.
   Remove HTTP client/Resilience4j dependencies and old recovery/inventory config;
   leave unrelated domain/persistence cleanup alone. Recover history at the baseline ref.
-- [ ] Update POST OpenAPI to pending202/terminal-replay200 with existing errors;
+- [x] Update POST OpenAPI to pending202/terminal-replay200 with existing errors;
   remove unreachable new-order201 behavior. Preserve Location and correlation
   headers; explain Retry-After as polling guidance, not a completion deadline.
   Move confirmed/rejected contract scenarios to historical fixtures; no active
   test may continue claiming fresh synchronous confirmation.
-- [ ] Ensure test cleanup deletes outbox rows before orders; normal tests set
+- [x] Ensure test cleanup deletes outbox rows before orders; normal tests set
   `order.outbox.enabled=false`. Run `make verify-order` and `make verify-inventory`.
   Gate: no inventory caller/worker bean; all new orders pending; rollback/race
   tests pass. Commit `feat: atomically enqueue order events and return pending`.
@@ -235,7 +237,7 @@ return new OrderCreation(order, true);
 **Interfaces:** Produce store/retry signatures from the map. Claim count is the
 current attempt's count, incremented in the atomic claim, never stale caller input.
 
-- [ ] Write concurrent claim tests with barriers, not sleeps. Test due/not-due,
+- [x] Write concurrent claim tests with barriers, not sleeps. Test due/not-due,
   delivered exclusion, expired lease reclaim, different live tokens, and success
   AND failure writes rejected after reclaim. Force lease expiration by SQL in
   store tests; label this a fixture rather than a process crash.
@@ -251,8 +253,8 @@ assertThat(store.reschedule(first.message().eventId(), first.token(), Duration.o
 assertThat(store.markDelivered(second.message().eventId(), second.token())).isTrue();
 ```
 
-- [ ] Run `mvn -f order-service/pom.xml -Dtest=OutboxRetryPolicyTest -Dit.test=OutboxDeliveryStoreIT verify`; capture red.
-- [ ] Implement a REQUIRES_NEW TransactionTemplate for each store operation with
+- [x] Run `mvn -f order-service/pom.xml -Dtest=OutboxRetryPolicyTest -Dit.test=OutboxDeliveryStoreIT verify`; capture red.
+- [x] Implement a REQUIRES_NEW TransactionTemplate for each store operation with
   database `clock_timestamp()` for eligibility/leases. Use this claim algorithm:
 
 ```sql
@@ -273,12 +275,12 @@ FROM candidate c WHERE o.event_id=c.event_id RETURNING o.*;
 -- sets stable error code and clears lease. Neither changes payload or identifiers.
 ```
 
-- [ ] Implement capped retry arithmetic before shifting/multiplication; test
+- [x] Implement capped retry arithmetic before shifting/multiplication; test
   attempts 1,2,6,7, Long.MAX_VALUE with jitter 0 and250. Expected capped bases:
   1000,2000,32000,60000,60000 ms. Reject attempt<1. Test one repeatedly failing
   row is deferred so another due row is claimable. Stats must count expired and
   live claims as undelivered and return zero age on an empty table.
-- [ ] Re-run targeted gate plus `make verify-order`. Commit `feat: claim outbox work with recoverable leases`.
+- [x] Re-run targeted gate plus `make verify-order`. Commit `feat: claim outbox work with recoverable leases`.
 
 ## Task 4: Bounded Kafka Publisher and Polling Relay
 
@@ -289,22 +291,22 @@ modify `order-service/pom.xml` and application.yml.
 **Interfaces:** Consume delivery store, retry policy, message. Produce publisher,
 hook and relay signatures from the map. OutboxPublicationHook is a no-op by default.
 
-- [ ] Write unit tests with a fake publisher that asserts
+- [x] Write unit tests with a fake publisher that asserts
   `TransactionSynchronizationManager.isActualTransactionActive()` is false.
   Test acknowledgement-before-marking, failure/reschedule, exhausted per-pass
   budget, empty queue, interrupt restoration and early stop, and a zero-row stale
   completion reported as stale rather than success. No async completion callback
   may independently update delivery state after a timeout.
-- [ ] Add Boot-managed `org.springframework.kafka:spring-kafka` and test-scoped
+- [x] Add Boot-managed `org.springframework.kafka:spring-kafka` and test-scoped
   `org.testcontainers:kafka` (versions in header). Testcontainers fixture uses
   `org.testcontainers.kafka.KafkaContainer("apache/kafka:3.7.1")` and explicit
   AdminClient topic creation. Verify resolved dependency versions with Maven tree.
-- [ ] Write real Kafka test: create an order with relay scheduling disabled, invoke
+- [x] Write real Kafka test: create an order with relay scheduling disabled, invoke
   runOnce manually, consume using a unique group/earliest, assert exact stored
   value/key and pending order. Add stopped-broker acceptance followed by restart
   and eventual publication, with bounded polling and the same broker storage.
-- [ ] Run `mvn -f order-service/pom.xml -Dtest=OutboxRelayTest,OutboxConfigurationTest -Dit.test=KafkaOutboxIT verify`; capture red before wiring.
-- [ ] Implement relay logic and enforce nonoverlapping calls with an AtomicBoolean
+- [x] Run `mvn -f order-service/pom.xml -Dtest=OutboxRelayTest,OutboxConfigurationTest -Dit.test=KafkaOutboxIT verify`; capture red before wiring.
+- [x] Implement relay logic and enforce nonoverlapping calls with an AtomicBoolean
   guard released in finally; do not put @Transactional on the relay:
 
 ```text
@@ -320,17 +322,17 @@ on interruption: restore interrupt; leave recoverable state; stop pass
 finally release guard and clear/restore MDC
 ```
 
-- [ ] KafkaOutboxPublisher uses `KafkaTemplate<String,String>.send(...).get(12000, MILLISECONDS)`
+- [x] KafkaOutboxPublisher uses `KafkaTemplate<String,String>.send(...).get(12000, MILLISECONDS)`
   with finite producer settings from the contract. Map timeout to ACK_UNCERTAIN,
   RecordTooLargeException to RECORD_TOO_LARGE, other send failures to SEND_FAILED.
   Preserve causes internally, not raw payload in logs. A timeout can leave a send
   in flight; duplicates remain permitted. Permanent failure continues capped retries.
-- [ ] Configuration tests reject nonpositive budgets, invalid lease/wait relations,
+- [x] Configuration tests reject nonpositive budgets, invalid lease/wait relations,
   and accidental scheduler activation when disabled. Test a failed large-message
   send and a later healthy message: failed event retained, healthy event delivered.
   Assert no DB transaction during publish/hook, normal hook inert, failedPending
   and age gauges meaningful, event/order/correlation IDs logged without payloads.
-- [ ] Run full service gates. Commit `feat: publish outbox events with bounded retries`.
+- [x] Run full service gates. Commit `feat: publish outbox events with bounded retries`.
 
 ## Task 5: Reproducible Broker and Real Crash Experiments
 
@@ -345,21 +347,21 @@ create production `outbox/proof/OutboxProofConfiguration.java` and test
 event ID. Harness reads a flushed structured ACK_BOUNDARY log marker; it controls
 process termination using Docker, never a public application endpoint.
 
-- [ ] Write proof-config tests: no hook activation without BOTH Spring profile
+- [x] Write proof-config tests: no hook activation without BOTH Spring profile
   `outbox-proof` and `order.outbox.proof.enabled=true`; selected event only; normal
   bean remains no-op. Invalid proof configuration fails explicitly. Inject a latch
   for unit tests; image hook waits interruptibly until container kill.
-- [ ] Extend Compose structural assertions first. Kafka uses KRaft broker/controller,
+- [x] Extend Compose structural assertions first. Kafka uses KRaft broker/controller,
   node1, internal client listener `kafka:9092`, controller9093, named `kafka-data`
   volume and service-network only; no DB network membership or public listener.
   Explicitly set single-node replication factors/min ISR=1 and persistent log dir.
   Add topic-init one-shot service creating 3-partition RF1 topic with 7-day delete
   retention. Order depends only on its database, never broker health/topic-init.
-- [ ] Configure bootstrap `kafka:9092`, remove old order inventory/recovery env;
+- [x] Configure bootstrap `kafka:9092`, remove old order inventory/recovery env;
   add finite broker healthcheck. Proof override uses unique Compose project,
   ephemeral loopback application/DB ports, `restart: "no"` for order, and guarded
   proof profile. Bound startup wait to120s and each recovery observation to180s.
-- [ ] Implement normal/injected proof steps with real HTTP-created orders:
+- [x] Implement normal/injected proof steps with real HTTP-created orders:
 
 ```text
 A. Start DB + order with relay disabled and no Kafka. POST ->202.
@@ -376,18 +378,18 @@ C. Start inventory only for the no-side-effect assertion; compare stock snapshot
    and attempt/reservation row counts before/after A/B, never call reserve in harness.
 ```
 
-- [ ] Consumer observation runs Kafka CLI inside the broker container, prints key,
+- [x] Consumer observation runs Kafka CLI inside the broker container, prints key,
   partition, offset, and JSON value; parse structured payloads in outbox-proof.py,
   filter by unique event ID. Do not mistake repeated reads of one offset for two
   publications. Start consumers with a fresh group/earliest and bounded timeout.
-- [ ] Test the marker and first-record observation before killing; otherwise the
+- [x] Test the marker and first-record observation before killing; otherwise the
   experiment proves an unknown crash location. Restart before first publication
   uses disabled relay rather than claiming an instruction-level HTTP crash.
-- [ ] Run proof-config tests and shell/Python structural tests red then green;
+- [x] Run proof-config tests and shell/Python structural tests red then green;
   run `bash scripts/verify-outbox-recovery.sh` and adapted restart proof.
   Inject `VERIFY_FAIL_AFTER_START=1`, expect exit97 and zero project-owned containers,
   networks and volumes. Preserve logs on failure, never globally prune.
-- [ ] Gate: two different offsets for one event, pending order, unchanged stock,
+- [x] Gate: two different offsets for one event, pending order, unchanged stock,
   no normal hook activation, success/failure cleanup. Commit
   `test: prove outbox recovery across real application crashes`.
 
@@ -401,11 +403,11 @@ with a link to its replacement for the active order path, preserving history.
 **Interfaces:** Publish `make verify-outbox-recovery` invoking the new script;
 no change to independent `make verify-order`/`make verify-inventory` semantics.
 
-- [ ] Add a structural test that the CI normal gate and deliberate-failure loop
+- [x] Add a structural test that the CI normal gate and deliberate-failure loop
   include outbox proof, keep restart/inventory proof, and omit active sync proof.
   Remove current sync-specific script/fixture targets only after locating all
   references; README explains checkout at the preserved baseline for those commands.
-- [ ] Implement the Make/CI changes and document runbook queries:
+- [x] Implement the Make/CI changes and document runbook queries:
 
 ```sql
 SELECT status, count(*) FROM orders GROUP BY status;
@@ -414,11 +416,11 @@ SELECT event_id, order_id, attempt_count, next_attempt_at, lease_until,
 FROM order_outbox WHERE delivered_at IS NULL ORDER BY created_at;
 ```
 
-- [ ] Document stop-old-writers upgrade procedure, pending-row guard, no automatic
+- [x] Document stop-old-writers upgrade procedure, pending-row guard, no automatic
   downgrade, broker/topic setup, permanent-error diagnosis, no arbitrary payload
   editing/deletion, pending-count/oldest-age metrics, and 4A pending-only API.
   Topic/producer acknowledgement is not consumer success. RF1 is not broker-HA proof.
-- [ ] Run the final gates from the implementation worktree:
+- [x] Run the final gates from the implementation worktree:
 
 ```bash
 make verify
@@ -427,11 +429,11 @@ make verify-inventory-image
 make verify-outbox-recovery
 ```
 
-- [ ] Run deliberate-failure cleanup for all three image scripts. Check
+- [x] Run deliberate-failure cleanup for all three image scripts. Check
   `git diff --check`; audit changed config for secret leakage; confirm startup
   agent warning guard intact. Record exact test counts/environment/log paths and
   Kafka offsets/event IDs, not expected or inherited results.
-- [ ] Perform whole-branch review, resolve findings with regression tests and rerun
+- [x] Perform whole-branch review, resolve findings with regression tests and rerun
   affected gates. Update scoreboard/ADR and relevant vault notes with actual limits;
   vault changes stay separate and require filesystem access if outside worktree.
   Gate hosted CI separately after user-authorized publication. Commit
@@ -446,10 +448,11 @@ All five Review Focus conditions have owner tests. Signatures in the interface m
 are shared contracts; proposed helper names in an implementer's tests must be
 defined in that task, not assumed to exist.
 
-Before execution, review this plan. Preserve the user's previously selected
-subagent-driven method unless they change it. No implementation starts from spec
-approval alone. Each completed task needs spec-compliance and code-quality review;
-parallel work must not overlap files or skip dependency gates.
+Execution used the approved subagent-driven method, with spec-compliance and
+quality review after each task. Whole-branch review and the correlation logging
+fix re-review are complete. Runtime poll naming and fixed retry constants above
+reflect the implemented configuration; runtime retry tuning would require a
+later code/config change. Hosted CI and merge/push are not claimed.
 
 ## Sources Checked During Planning
 

@@ -1,8 +1,8 @@
 # Phase 4A Transactional Outbox Design
 
 Date: 2026-09-19
-Status: Written spec approved by the user on 2026-09-19; implementation planning in progress.
-No implementation or Phase 4A verification is claimed.
+Status: Approved, implemented, locally verified and independently reviewed on 2026-09-19.
+Hosted Phase 4A CI remains pending; no merge or push is claimed.
 
 ## Purpose and scope
 
@@ -227,6 +227,6 @@ Hosted CI is a separate gate after an explicitly authorized publication.
 
 ## Next approval gate
 
-The user approved this written spec. Review the implementation plan before
-execution. No application code, dependencies, migrations, or infrastructure are
-changed by this document.
+The user approved this spec and the implementation plan. Local implementation
+and independent review are complete; see the scoreboard for measured evidence
+and limits. Merge/push remains a separate user decision, followed by hosted CI.

@@ -2,7 +2,7 @@
 
 Date: 2026-09-19
 Status: Approved design, implemented and locally verified on 2026-09-19.
-Final whole-branch review and hosted CI pending. No merge/push authorization.
+Whole-branch review and scoped re-review complete. Hosted CI pending. No merge/push authorization.
 
 ## Context
 
@@ -76,7 +76,8 @@ payload/key/ID at different offsets, pending orders and no inventory effects.
 Restart and independent inventory image proofs remain separate checks. Each image
 script also exercises deliberate exit-97 cleanup of owned resources only.
 
-Self-review is not independent review. Controller task review, final whole-branch
-review and hosted CI are separate pending gates; local ARM64 runs do not prove
-AMD64 execution. Expected negative-test warnings and consumer idle diagnostics
+Independent task reviews, whole-branch review and scoped re-review completed.
+The final review's valid-colon correlation logging finding was fixed in `9d9b73f`.
+Hosted CI remains a separate pending gate; local ARM64 runs do not prove AMD64
+execution. Expected negative-test warnings and consumer idle diagnostics
 remain visible, not globally suppressed. No merge or push is part of this decision.

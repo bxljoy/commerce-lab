@@ -15,7 +15,7 @@ See [ADR-0004](docs/adr/0004-evidence-driven-learning-roadmap.md) for the revise
 
 | Service | Owns | Status |
 |---|---|---|
-| `order-service` | Order identity, atomic outbox, polling publication | Phase 4A locally verified; final review and hosted CI pending |
+| `order-service` | Order identity, atomic outbox, polling publication | Phase 4A locally verified and reviewed; hosted CI pending |
 | `inventory-service` | Stock, reservations and durable attempt replay | Phase 3B merged; Phase 4B consumer not started |
 | `frontend` | React SPA to place orders and watch them confirm | not started (Phase 6) |
 
@@ -325,8 +325,9 @@ or change identity/destination to make the backlog disappear. Delivered rows are
 retained; purging and arbitrary corruption repair are outside 4A.
 
 See [ADR-0008](docs/adr/0008-transactional-outbox-and-polling-relay.md) and the
-[scoreboard](docs/notes-verification.md) for evidence and limits. Final whole-branch
-review and Phase 4A hosted CI remain pending; local tests are not merge authorization.
+[scoreboard](docs/notes-verification.md) for evidence and limits. Whole-branch
+review and scoped fixes are complete. Phase 4A hosted CI remains pending; local
+tests are not merge authorization.
 
 ### Generated API code
 
@@ -373,7 +374,7 @@ Write an ADR for meaningful decisions; smaller experiments need only a short not
 | Next milestone | What it proves |
 |---|---|
 | Phase 3B closeout | Merged at ca525d1; hosted CI succeeded |
-| Phase 4A | Outbox implementation; final review and hosted CI pending |
+| Phase 4A | Outbox implementation locally verified and reviewed; hosted CI pending |
 | Phase 4B | Both services recover from duplicates, rejection, cancellation, and delayed events |
 | Phase 5 | Logs, metrics, and traces explain successful and failed orders |
 | Phase 6 | A small UI and E2E test demonstrate the completed flow |

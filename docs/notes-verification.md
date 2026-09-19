@@ -23,7 +23,7 @@ See [ADR-0004](adr/0004-evidence-driven-learning-roadmap.md) for the revised sco
 | 2 | Reliable Postgres persistence and bounded cleanup | ✅ |
 | 3A | Inventory correctness under tested PostgreSQL contention shapes | ✅ |
 | 3B | Sync integration, idempotency, uncertain-outcome recovery | ✅ Merged at ca525d1; hosted CI succeeded |
-| 4A | Durable event delivery through an outbox | 🟡 Locally verified; final review and hosted CI pending |
+| 4A | Durable event delivery through an outbox | 🟡 Locally verified and reviewed; hosted CI pending |
 | 4B | Workflow recovery, compensation, idempotent consumers, DLQ | ⬜ |
 | 5 | Observability — logs/metrics/traces across the system | ⬜ |
 | 6 | Frontend slice + E2E; core finish line | ⬜ |
@@ -220,9 +220,10 @@ owned by the controller and are not part of Task 6's worktree changes.
 ### Phase 4A: durable event delivery
 
 Implementation and local image evidence recorded on 2026-09-19.
-**Final whole-branch review and hosted CI pending.** This is implementer
-self-review, not independent review or phase-exit/merge authorization. Controller
-owns task review, final review, vault updates and final evidence wording.
+**Independent task reviews, whole-branch review and scoped re-review complete.**
+The final nonblocking correlation-ID finding was fixed in `9d9b73f` with a red/green
+regression test. Hosted CI remains pending; local completion is not merge/push
+authorization. Vault roadmap and relevant source notes are updated separately.
 
 - [x] Order, request identity and outbox entry commit or roll back together.
 - [x] Restart after HTTP commit but before publication recovers the original event.
@@ -230,10 +231,25 @@ owns task review, final review, vault updates and final evidence wording.
   duplicate publication with stable ID/key/payload at different offsets.
 - [x] Event schema, partition key, ordering limits, retries and upgrade runbook documented.
 - [x] Make/CI includes outbox, restart, independent inventory and all three cleanup failures.
-- [ ] Final whole-branch review after controller task review.
+- [x] Final whole-branch review after controller task review, including scoped fix re-review.
 - [ ] Hosted Phase 4A CI after separately authorized publication.
 
-Fresh `make verify`: **234 passed, 0 failures/errors/skips**:
+Final controller `make verify` at `9d9b73f`: **239 passed, 0 failures/errors/skips**
+(order 97 Surefire + 58 Failsafe = 155; inventory 48 + 36 = 84), ending
+22:36:54+02:00. The five additional cases protect colon-containing correlation
+IDs and malformed fallback behavior. Fifteen Python tests passed separately.
+The final rebuilt `make verify-outbox-recovery` also exited 0:
+project `commerce-outbox-commerce-proof-nreapptl`, event A
+`6c40cce6-4014-44ff-be07-23b4dc3291dd` recovered at partition1 offset0;
+event B `5a8dc8a9-42ff-4726-b09f-c80338ca673b` appeared at partition2 offsets0/1
+with identical ID/key/payload across actual SIGKILL and restart. Both orders stayed
+pending, inventory effects remained zero, and cleanup verified no owned resources.
+Logs: `/tmp/phase4a-final-verify.log` and `/tmp/phase4a-final-outbox-image.log`, also
+copied to the evidence directory below. The earlier three-image/failure-cleanup
+matrix below covers unchanged scripts; the final Java change only corrected log
+correlation validation. No hosted or AMD64 result is inferred from these runs.
+
+Pre-final-fix `make verify` at `5bc6bd9`: **234 passed, 0 failures/errors/skips**:
 order 92 Surefire + 58 Failsafe = 150; inventory 48 + 36 = 84.
 Final run followed clean targets after deleting unused sync-only 201 contract
 examples: order finished 22:17:11+02:00 (01:04 min), inventory 22:17:25+02:00
@@ -287,15 +303,15 @@ verified owned containers=0, networks=0, volumes=0. No global prune. Cleanup
 cannot be guaranteed if the harness itself is SIGKILLed, the host is lost, or the
 daemon prevents removal; bounded cleanup reports failures instead of inventing success.
 
-Exact local logs are retained under
-`/Users/bxl/.codex/worktrees/phase-4a-outbox/commerce-lab/.superpowers/sdd/2026-09-19-phase-4a-outbox/`:
+Raw local logs were copied to `/tmp/commerce-lab-phase4a-evidence/` before removing
+the temporary agent workspace:
 `task6-verify-final.log`, `task6-clean-{order,inventory}.log`,
 `task6-verify.log`, `task6-structural-{red,green}.log`, `task6-python.log`,
 `task6-{restart,inventory,outbox}-image.log`,
 `task6-{restart,inventory,outbox}-failure.log`,
 `task6-frozen.sha256`, `task6-frozen-check.log` and `task6-frozen-final.log`.
-These ignored local handoff artifacts are not hosted CI artifacts.
-The report `task-6-report.md` gives full commands, final reruns and changed paths.
+These ephemeral local artifacts are not hosted CI artifacts. The evidence above
+and Git history are the durable record; `/tmp` files may be removed by the host.
 
 Minor diagnostics remain visible: expected negative-test WARN/ERROR messages
 (invalid configuration, guarded migration, injected constraints, broker outage)

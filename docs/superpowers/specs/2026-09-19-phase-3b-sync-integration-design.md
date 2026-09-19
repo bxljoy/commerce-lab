@@ -2,7 +2,7 @@
 
 Date: 2026-09-19
 Status: Approved, implemented, locally verified and reviewed on 2026-09-19.
-Hosted CI remains pending on the unpushed branch; see the acceptance scoreboard for evidence and limits.
+Merged and pushed at `ca525d1`; hosted CI passed. See the acceptance scoreboard for evidence and limits.
 
 ## Goal and scope
 

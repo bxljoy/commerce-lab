@@ -18,7 +18,7 @@ OpenAPI Generator 7.10.0, Testcontainers, and a compatible pinned Resilience4j v
 
 **Status:** Implemented and locally verified on 2026-09-19 on
 `codex/phase-3b-sync-integration`; whole-branch review and scoped fixes are complete.
-Hosted CI remains pending on the unpushed branch. See the acceptance scoreboard.
+Merged and pushed at `ca525d1`; hosted CI passed. See the acceptance scoreboard.
 
 ## Global constraints
 
@@ -327,14 +327,14 @@ checks remain independently runnable.
   and blocked operational inconsistencies. Mark ADR-0007 accepted after design review
   and verified implementation. Update vault notes separately with appropriate access.
 - [x] Review the whole branch, fix findings with focused regression checks, then
-  report the reviewed local result; hosted CI still gates phase closeout. Merge/push requires the user's instruction for
-  this phase; the Phase 3A merge authorization does not publish Phase 3B.
+  report the reviewed local result. The user subsequently authorized Phase 3B
+  merge/push; merged-main verification and hosted CI passed at `ca525d1`.
 
 **Runtime evidence boundary:** The pre-first-attempt image case starts from an
 atomic pending database fixture inserted while order-service is stopped; it is not
 an instruction-level HTTP-handler crash injection. The lost-response case uses
 both real services and discards committed 201/200 responses before restarting order.
-Hosted CI remains pending until publication is explicitly authorized.
+Hosted CI passed after the separately authorized merge and push; see the scoreboard.
 
 ## Completion review
 
