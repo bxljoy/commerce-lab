@@ -37,16 +37,6 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 @ExtendWith(OutputCaptureExtension.class)
 class OrderIdempotencyIT extends AbstractPostgresIntegrationTest {
-    static final com.commercelab.order.inventory.UnavailableInventoryFixture INVENTORY =
-            new com.commercelab.order.inventory.UnavailableInventoryFixture();
-
-    @org.springframework.test.context.DynamicPropertySource
-    static void inventory(org.springframework.test.context.DynamicPropertyRegistry registry) {
-        registry.add("inventory.base-url", INVENTORY::url);
-    }
-
-    @org.junit.jupiter.api.AfterAll
-    static void closeInventory() { INVENTORY.close(); }
     @Autowired OrderCreationService creation;
     @Autowired JdbcTemplate jdbc;
     @Autowired MockMvc mvc;
@@ -62,7 +52,7 @@ class OrderIdempotencyIT extends AbstractPostgresIntegrationTest {
 
     @BeforeEach
     void clear() {
-        jdbc.execute("TRUNCATE order_requests, order_lines, orders CASCADE");
+        jdbc.execute("TRUNCATE order_outbox, order_requests, order_lines, orders CASCADE");
     }
 
     @Test
@@ -246,6 +236,7 @@ class OrderIdempotencyIT extends AbstractPostgresIntegrationTest {
     }
 
     private void assertCounts(int count) {
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM order_outbox", Integer.class)).isEqualTo(count);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM orders", Integer.class)).isEqualTo(count);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM order_requests", Integer.class)).isEqualTo(count);
     }

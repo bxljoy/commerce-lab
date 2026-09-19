@@ -2,6 +2,8 @@ package com.commercelab.order.service;
 
 import com.commercelab.order.domain.IdempotencyConflictException;
 import com.commercelab.order.domain.Order;
+import com.commercelab.order.outbox.OrderOutboxStore;
+import com.commercelab.order.outbox.OrderPlacedEventFactory;
 import com.commercelab.order.persistence.OrderRequestStore;
 import com.commercelab.order.repository.OrderRepository;
 import java.time.Clock;
@@ -17,12 +19,17 @@ public class OrderCreationService {
     private final OrderRequestStore requests;
     private final TransactionTemplate transaction;
     private final Clock clock;
+    private final OrderOutboxStore outbox;
+    private final OrderPlacedEventFactory eventFactory;
 
     public OrderCreationService(OrderRepository orders, OrderRequestStore requests,
-            PlatformTransactionManager transactionManager, Clock clock) {
+            PlatformTransactionManager transactionManager, Clock clock,
+            OrderOutboxStore outbox, OrderPlacedEventFactory eventFactory) {
         this.orders = orders;
         this.requests = requests;
         this.clock = clock;
+        this.outbox = outbox;
+        this.eventFactory = eventFactory;
         transaction = new TransactionTemplate(transactionManager);
         transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -38,6 +45,7 @@ public class OrderCreationService {
                 if (existing.isPresent()) return replay(existing.get(), payload);
                 Order order = orders.add(Order.place(payload.customerId(), payload.lines(), clock.instant()));
                 requests.insert(key, order.id(), payload, correlationId);
+                outbox.insert(eventFactory.create(order, correlationId));
                 return new OrderCreation(order, true);
             });
         } catch (RuntimeException ex) {

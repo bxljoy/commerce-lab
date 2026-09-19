@@ -25,16 +25,12 @@ import org.springframework.test.web.servlet.MvcResult;
 @SpringBootTest
 @AutoConfigureMockMvc
 class OrderApiIT extends AbstractPostgresIntegrationTest {
-    static final com.commercelab.order.inventory.UnavailableInventoryFixture INVENTORY =
-            new com.commercelab.order.inventory.UnavailableInventoryFixture();
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
 
-    @org.springframework.test.context.DynamicPropertySource
-    static void inventory(org.springframework.test.context.DynamicPropertyRegistry registry) {
-        registry.add("inventory.base-url", INVENTORY::url);
+    @org.junit.jupiter.api.BeforeEach
+    void clear() {
+        jdbc.execute("TRUNCATE order_outbox, order_requests, order_lines, orders CASCADE");
     }
-
-    @org.junit.jupiter.api.AfterAll
-    static void closeInventory() { INVENTORY.close(); }
 
     @Autowired
     private MockMvc mockMvc;

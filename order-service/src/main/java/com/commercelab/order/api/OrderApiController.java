@@ -51,7 +51,7 @@ public class OrderApiController implements OrdersApi {
         var creation = orderService.placeOrder(idempotencyKey, command, correlationId);
         Order order = creation.order();
         boolean pending = order.status() == OrderStatus.PENDING_INVENTORY;
-        var response = ResponseEntity.status(pending ? 202 : creation.created() ? 201 : 200)
+        var response = ResponseEntity.status(pending ? 202 : 200)
                 .location(URI.create("/api/v1/orders/" + order.id()))
                 .header("X-Correlation-ID", correlationId);
         if (pending) response.header("Retry-After", "5");

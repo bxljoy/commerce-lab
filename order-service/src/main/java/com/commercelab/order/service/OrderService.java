@@ -17,17 +17,14 @@ public class OrderService {
 
     private final OrderRepository repository;
     private final OrderCreationService creation;
-    private final OrderReservationCoordinator reservations;
 
-    public OrderService(OrderRepository repository, OrderCreationService creation, OrderReservationCoordinator reservations) {
+    public OrderService(OrderRepository repository, OrderCreationService creation) {
         this.repository = repository;
         this.creation = creation;
-        this.reservations = reservations;
     }
 
     public OrderCreation placeOrder(String key, PlaceOrderCommand command, String correlationId) {
-        OrderCreation result = creation.createOrReplay(key, command, correlationId);
-        return result.created() ? new OrderCreation(reservations.attempt(result.order().id()), true) : result;
+        return creation.createOrReplay(key, command, correlationId);
     }
 
     /** Retrieve an order or throw {@link OrderNotFoundException} (→ 404). */

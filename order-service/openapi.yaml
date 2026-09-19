@@ -22,7 +22,8 @@ paths:
       operationId: placeOrder
       summary: Create or replay an order
       description: |
-        Task 3 creates pending orders only; synchronous inventory completion is connected in Task 5.
+        Atomically persists a pending order, request identity, and OrderPlaced outbox event.
+        New orders remain pending throughout Phase 4A; publication does not complete an order.
         Matching keys replay current state. Line order is significant; decimal scale is not.
       parameters:
         - name: Idempotency-Key
@@ -44,20 +45,12 @@ paths:
               $ref: '#/components/schemas/PlaceOrderRequest'
       responses:
         '200':
-          description: Matching replay of an existing terminal order.
+          description: Matching replay of a historical terminal order; no event is created.
           headers:
-            Location:
+            X-Correlation-ID:
               schema:
                 type: string
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OrderResponse'
-        '201':
-          description: New order with a definitive inventory outcome (connected in Task 5).
-          headers:
             Location:
-              description: Canonical URI of the created order.
               schema:
                 type: string
           content:
@@ -67,10 +60,14 @@ paths:
         '202':
           description: New or replayed order awaiting an inventory outcome.
           headers:
+            X-Correlation-ID:
+              schema:
+                type: string
             Location:
               schema:
                 type: string
             Retry-After:
+              description: Suggested polling interval in seconds, not a completion deadline.
               schema:
                 type: integer
                 example: 5

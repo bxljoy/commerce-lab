@@ -3,7 +3,12 @@ package com.commercelab.order;
 import static org.assertj.core.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
-import com.commercelab.order.inventory.InventoryContractFixture;
+import com.commercelab.order.domain.Order;
+import com.commercelab.order.domain.OrderStatus;
+import com.commercelab.order.repository.OrderRepository;
+import com.commercelab.order.persistence.OrderRequestStore;
+import com.commercelab.order.service.OrderPayload;
+import com.commercelab.order.service.PlaceOrderCommand;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.OffsetDateTime;
@@ -16,45 +21,59 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpServletResponse;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest
 @AutoConfigureMockMvc
 class OrderPublicContractIT extends AbstractPostgresIntegrationTest {
-    static final InventoryContractFixture INVENTORY = new InventoryContractFixture(true);
     static final ObjectMapper JSON = new ObjectMapper();
     static final String REQUEST = """
             {"customerId":"contract-customer","currency":"EUR","lines":[{"sku":"A","quantity":2,"unitPrice":1}]}
             """;
 
-    @DynamicPropertySource static void inventory(DynamicPropertyRegistry registry) {
-        registry.add("inventory.base-url", INVENTORY::url);
-    }
-    @AfterAll static void close() { INVENTORY.close(); }
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
-    @Autowired io.github.resilience4j.circuitbreaker.CircuitBreaker breaker;
+    @Autowired OrderRepository orders;
+    @Autowired OrderRequestStore requests;
+    @Autowired org.springframework.transaction.PlatformTransactionManager transactionManager;
 
-    @BeforeEach void reset() throws Exception {
-        jdbc.execute("TRUNCATE order_requests, order_lines, orders CASCADE");
-        breaker.reset();
-        INVENTORY.respond("accepted");
+    @BeforeEach void reset() {
+        jdbc.execute("TRUNCATE order_outbox, order_requests, order_lines, orders CASCADE");
     }
 
-    @ParameterizedTest @ValueSource(strings = {"confirmed", "rejected", "pending"})
-    void creationAndReplayMeetPublicConsumerExpectations(String scenario) throws Exception {
-        if (scenario.equals("rejected")) INVENTORY.respond("stock-rejected");
-        if (scenario.equals("pending")) INVENTORY.unavailable();
-        JsonNode created = check(scenario, send(REQUEST));
-        JsonNode replayed = check(scenario.equals("pending") ? "pending" : "replay-" + scenario, send(REQUEST));
+    @Test void creationAndReplayArePending() throws Exception {
+        JsonNode created = check("pending", send(REQUEST));
+        JsonNode replayed = check("pending", send(REQUEST));
         assertThat(replayed.path("id")).as("replayed identity").isEqualTo(created.path("id"));
         assertThat(replayed.path("placedAt")).as("original placement").isEqualTo(created.path("placedAt"));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM order_outbox", Long.class)).isEqualTo(1);
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"confirmed", "rejected"})
+    void historicalTerminalReplayCreatesNoEvent(String scenario) throws Exception {
+        var payload = OrderPayload.from(new PlaceOrderCommand("contract-customer", "EUR", java.util.List.of(
+                new PlaceOrderCommand.Line("A", 2, java.math.BigDecimal.ONE))));
+        var historical = new Order(UUID.randomUUID(), payload.customerId(),
+                scenario.equals("confirmed") ? OrderStatus.CONFIRMED : OrderStatus.REJECTED,
+                payload.lines(), java.time.Instant.parse("2026-09-19T12:00:00Z"),
+                scenario.equals("rejected") ? "STOCK_UNAVAILABLE" : null, null);
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager).executeWithoutResult(tx -> {
+            orders.add(historical);
+            requests.insert("public-contract", historical.id(), payload, "historical");
+        });
+        for (int i = 0; i < 2; i++) {
+            var replay = check("replay-" + scenario, send(REQUEST));
+            assertThat(replay.path("id").textValue()).isEqualTo(historical.id().toString());
+            assertThat(OffsetDateTime.parse(replay.path("placedAt").textValue()).toInstant())
+                    .isEqualTo(historical.placedAt());
+        }
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM orders", Long.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM order_requests", Long.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM order_outbox", Long.class)).isZero();
     }
 
     @Test void changedValidPayloadHasKeyConflictProblem() throws Exception {
-        check("confirmed", send(REQUEST));
+        check("pending", send(REQUEST));
         var changed = (com.fasterxml.jackson.databind.node.ObjectNode) JSON.readTree(REQUEST);
         changed.put("customerId", "different-customer");
         check("conflict", send(changed.toString()));

@@ -22,11 +22,23 @@ class OrderServiceTest {
 
     private OrderService service;
     private InMemoryOrderRepository repository;
+    private OrderCreationService creation;
 
     @BeforeEach
     void setUp() {
         repository = new InMemoryOrderRepository();
-        service = new OrderService(repository, mock(OrderCreationService.class), mock(OrderReservationCoordinator.class));
+        creation = mock(OrderCreationService.class);
+        service = new OrderService(repository, creation);
+    }
+
+    @Test
+    void placeOrderReturnsDurablyCreatedPendingOrderUnchanged() {
+        var command = new PlaceOrderCommand("cust", "EUR", List.of(
+                new PlaceOrderCommand.Line("A", 1, BigDecimal.ONE)));
+        var payload = OrderPayload.from(command);
+        var result = new OrderCreation(Order.place(payload.customerId(), payload.lines()), true);
+        org.mockito.Mockito.when(creation.createOrReplay("key", command, "correlation")).thenReturn(result);
+        assertThat(service.placeOrder("key", command, "correlation")).isSameAs(result);
     }
 
     @Test

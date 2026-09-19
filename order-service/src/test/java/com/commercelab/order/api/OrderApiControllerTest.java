@@ -48,6 +48,25 @@ class OrderApiControllerTest {
     }
 
     @Test
+    void historicalTerminalReplayReturns200WithoutPollingHeader() throws Exception {
+        Order pending = sampleOrder();
+        Order historical = new Order(pending.id(), pending.customerId(),
+                com.commercelab.order.domain.OrderStatus.CONFIRMED, pending.lines(), pending.placedAt());
+        when(orderService.placeOrder(any(), any(), any())).thenReturn(new OrderCreation(historical, false));
+        mockMvc.perform(post("/api/v1/orders").header("Idempotency-Key", "historical")
+                        .header("X-Correlation-ID", "replay-correlation")
+                        .contentType(MediaType.APPLICATION_JSON).content("""
+                        {"customerId":"cust-1","currency":"EUR",
+                         "lines":[{"sku":"SKU-1","quantity":2,"unitPrice":9.99}]}
+                        """))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Location", "/api/v1/orders/" + historical.id()))
+                .andExpect(header().string("X-Correlation-ID", "replay-correlation"))
+                .andExpect(header().doesNotExist("Retry-After"))
+                .andExpect(jsonPath("$.status").value("CONFIRMED"));
+    }
+
+    @Test
     void placeOrderReturns202WithLocationAndBody() throws Exception {
         Order order = sampleOrder();
         when(orderService.placeOrder(any(), any(), any())).thenReturn(new OrderCreation(order, true));
