@@ -89,6 +89,12 @@ def restart_proof():
     assert created["status"] == "PENDING_INVENTORY", created
     assert headers["Location"] == "/api/v1/orders/" + order_id
     assert headers["Retry-After"] == "5"
+    def outbox_snapshot():
+        return compose("exec", "-T", "postgres", "psql", "-U", "order", "-d", "orderdb", "-Atc",
+                       f"SELECT event_id || ':' || payload FROM order_outbox WHERE order_id='{order_id}' "
+                       "AND delivered_at IS NULL AND attempt_count=0")
+    snapshot = outbox_snapshot()
+    assert snapshot and len(snapshot.splitlines()) == 1, snapshot
     compose("restart", "order-service")
     base = order_url()
     wait_health(base)
@@ -97,8 +103,10 @@ def restart_proof():
     assert actual["lines"] == created["lines"], actual
     replay, _ = request(base, "/api/v1/orders", 202, "POST", payload, key)
     assert replay["id"] == order_id, replay
+    assert outbox_snapshot() == snapshot
     assert_services(["order-service", "postgres"])
-    print(f"PASS isolated pending restart: sameID={order_id}, total=17.9999, lines preserved; no inventory containers")
+    print(f"PASS isolated pending restart: sameID={order_id}, eventID={snapshot.split(':', 1)[0]}, "
+          "outboxRows=1 attempts=0 immutable payload, total=17.9999, lines preserved; relay disabled, no broker/inventory")
 
 
 def inventory_proof():
@@ -224,4 +232,5 @@ def sync_proof():
     print("PASS real-producer terminal order responses: new201 CONFIRMED/REJECTED, replay200, rejection/replay leave stock unchanged")
 
 
-{"restart": restart_proof, "inventory": inventory_proof, "sync": sync_proof}[sys.argv[1]]()
+if __name__ == "__main__":
+    {"restart": restart_proof, "inventory": inventory_proof, "sync": sync_proof}[sys.argv[1]]()

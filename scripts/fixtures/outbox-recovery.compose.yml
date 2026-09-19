@@ -1,0 +1,7 @@
+services:
+  order-service:
+    restart: "no"
+    environment:
+      SPRING_PROFILES_ACTIVE: ${PROOF_PROFILE:-default}
+      ORDER_OUTBOX_PROOF_ENABLED: ${PROOF_ENABLED:-false}
+      ORDER_OUTBOX_PROOF_EVENT_ID: ${PROOF_EVENT_ID:-}
