@@ -18,8 +18,14 @@ public record Order(
         String customerId,
         OrderStatus status,
         List<OrderLine> lines,
-        Instant placedAt
+        Instant placedAt,
+        String rejectionReason,
+        String recoveryIssue
 ) {
+
+    public Order(UUID id, String customerId, OrderStatus status, List<OrderLine> lines, Instant placedAt) {
+        this(id, customerId, status, lines, placedAt, null, null);
+    }
 
     public Order {
         Objects.requireNonNull(id, "id");
@@ -39,7 +45,11 @@ public record Order(
 
     /** New orders await inventory; historical statuses remain readable. */
     public static Order place(String customerId, List<OrderLine> lines) {
-        return new Order(UUID.randomUUID(), customerId, OrderStatus.PENDING_INVENTORY, lines, Instant.now());
+        return place(customerId, lines, Instant.now());
+    }
+
+    public static Order place(String customerId, List<OrderLine> lines, Instant placedAt) {
+        return new Order(UUID.randomUUID(), customerId, OrderStatus.PENDING_INVENTORY, lines, placedAt);
     }
 
     /** The order's currency, taken from its lines (all lines share one currency). */

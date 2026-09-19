@@ -80,6 +80,16 @@ class OrderPersistenceIT extends AbstractPostgresIntegrationTest {
     }
 
     @Test
+    void creationAdapterCannotOverwriteAnExistingOrderAfterVersionWasAdded() {
+        Order order = sampleOrder();
+        adapter.add(order);
+        Order stored = adapter.findById(order.id()).orElseThrow();
+        assertThatThrownBy(() -> adapter.add(order))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        assertThat(adapter.findById(order.id()).orElseThrow()).isEqualTo(stored);
+    }
+
+    @Test
     void adapterEagerlyFetchesLines_safeOutsideSession() {
         Order placed = sampleOrder();
         adapter.add(placed);

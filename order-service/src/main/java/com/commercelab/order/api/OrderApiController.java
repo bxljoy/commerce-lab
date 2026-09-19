@@ -68,6 +68,9 @@ public class OrderApiController implements OrdersApi {
                 .status(OrderResponse.StatusEnum.fromValue(order.status().name()))
                 .currency(order.currency().getCurrencyCode())
                 .totalAmount(order.total().amount())
+                .rejectionReason(order.rejectionReason() == null ? null
+                        : OrderResponse.RejectionReasonEnum.fromValue(order.rejectionReason()))
+                .recoveryIssue(order.recoveryIssue())
                 .placedAt(order.placedAt().atOffset(ZoneOffset.UTC));
         order.lines().forEach(line -> body.addLinesItem(toLineResponse(line)));
         return body;

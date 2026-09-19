@@ -10,7 +10,7 @@ import java.util.UUID;
 import org.springframework.stereotype.Repository;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-/** Request identity operations participate in the creation service's transaction. */
+/** Request identity operations participate in the calling service's transaction. */
 @Repository
 public class OrderRequestStore {
     public static final String KEY_CONSTRAINT = "pk_order_requests_key";
@@ -37,6 +37,11 @@ public class OrderRequestStore {
         } catch (JsonProcessingException ex) {
             throw new IllegalStateException("Invalid stored order request", ex);
         }
+    }
+
+    public String findCorrelationId(UUID orderId) {
+        return jdbc.query("SELECT correlation_id FROM order_requests WHERE order_id = ?",
+                rs -> rs.next() ? rs.getString(1) : null, orderId);
     }
 
     public void insert(String key, UUID orderId, OrderPayload payload, String correlationId) {

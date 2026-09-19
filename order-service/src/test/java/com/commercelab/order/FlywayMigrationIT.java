@@ -18,6 +18,37 @@ import org.junit.jupiter.api.Test;
 class FlywayMigrationIT extends AbstractPostgresIntegrationTest {
 
     @Test
+    void versionFourSchedulesExistingPendingButNotHistoricalOrders() throws Exception {
+        String schema = "phase3_upgrade_" + UUID.randomUUID().toString().replace("-", "");
+        try (Connection connection = connection(); Statement statement = connection.createStatement()) {
+            statement.execute("CREATE SCHEMA " + schema);
+            migrate(schema, MigrationVersion.fromVersion("3"));
+            statement.execute("INSERT INTO " + schema + ".orders (id, customer_id, status, currency, placed_at) VALUES "
+                    + "(gen_random_uuid(), 'old', 'PLACED', 'EUR', '2026-01-01T00:00:00Z'),"
+                    + "(gen_random_uuid(), 'pending', 'PENDING_INVENTORY', 'EUR', '2026-01-01T00:00:00Z')");
+            migrate(schema, null);
+            try (ResultSet rows = statement.executeQuery("SELECT status, version, attempt_count, recovery_blocked, "
+                    + "next_attempt_at, placed_at FROM " + schema + ".orders ORDER BY customer_id")) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getString("status")).isEqualTo("PLACED");
+                assertThat(rows.getLong("version")).isZero();
+                assertThat(rows.getInt("attempt_count")).isZero();
+                assertThat(rows.getBoolean("recovery_blocked")).isFalse();
+                assertThat(rows.getObject("next_attempt_at")).isNull();
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getString("status")).isEqualTo("PENDING_INVENTORY");
+                assertThat(rows.getLong("version")).isZero();
+                assertThat(rows.getObject("next_attempt_at", OffsetDateTime.class))
+                        .isEqualTo(rows.getObject("placed_at", OffsetDateTime.class).plusSeconds(5));
+            }
+        } finally {
+            try (Connection connection = connection(); Statement statement = connection.createStatement()) {
+                statement.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+            }
+        }
+    }
+
+    @Test
     void versionTwoBackfillsExistingLinesDeterministically() throws Exception {
         String schema = "phase2_upgrade_" + UUID.randomUUID().toString().replace("-", "");
         try (Connection connection = connection()) {

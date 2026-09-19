@@ -4,6 +4,7 @@ import com.commercelab.order.domain.IdempotencyConflictException;
 import com.commercelab.order.domain.Order;
 import com.commercelab.order.persistence.OrderRequestStore;
 import com.commercelab.order.repository.OrderRepository;
+import java.time.Clock;
 import org.postgresql.util.PSQLException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -15,11 +16,13 @@ public class OrderCreationService {
     private final OrderRepository orders;
     private final OrderRequestStore requests;
     private final TransactionTemplate transaction;
+    private final Clock clock;
 
     public OrderCreationService(OrderRepository orders, OrderRequestStore requests,
-            PlatformTransactionManager transactionManager) {
+            PlatformTransactionManager transactionManager, Clock clock) {
         this.orders = orders;
         this.requests = requests;
+        this.clock = clock;
         transaction = new TransactionTemplate(transactionManager);
         transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -33,7 +36,7 @@ public class OrderCreationService {
             return transaction.execute(status -> {
                 var existing = requests.find(key);
                 if (existing.isPresent()) return replay(existing.get(), payload);
-                Order order = orders.add(Order.place(payload.customerId(), payload.lines()));
+                Order order = orders.add(Order.place(payload.customerId(), payload.lines(), clock.instant()));
                 requests.insert(key, order.id(), payload, correlationId);
                 return new OrderCreation(order, true);
             });

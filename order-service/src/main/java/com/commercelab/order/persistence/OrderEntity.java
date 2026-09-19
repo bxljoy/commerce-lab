@@ -12,6 +12,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Currency;
@@ -49,6 +50,28 @@ public class OrderEntity {
     @Column(name = "placed_at", nullable = false)
     private Instant placedAt;
 
+    @Version
+    @Column(nullable = false)
+    private Long version;
+
+    @Column(name = "next_attempt_at")
+    private Instant nextAttemptAt;
+
+    @Column(name = "last_attempt_at")
+    private Instant lastAttemptAt;
+
+    @Column(name = "attempt_count", nullable = false)
+    private int attemptCount;
+
+    @Column(name = "recovery_blocked", nullable = false)
+    private boolean recoveryBlocked;
+
+    @Column(name = "last_failure_code", length = 64)
+    private String lastFailureCode;
+
+    @Column(name = "rejection_reason", length = 64)
+    private String rejectionReason;
+
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("position ASC")
     private List<OrderLineEntity> lines = new ArrayList<>();
@@ -64,6 +87,10 @@ public class OrderEntity {
         entity.status = order.status();
         entity.currency = order.currency().getCurrencyCode();
         entity.placedAt = order.placedAt();
+        entity.rejectionReason = order.rejectionReason();
+        if (entity.status == OrderStatus.PENDING_INVENTORY) {
+            entity.nextAttemptAt = order.placedAt().plusSeconds(5);
+        }
         for (int position = 0; position < order.lines().size(); position++) {
             entity.lines.add(OrderLineEntity.fromDomain(order.lines().get(position), entity, position));
         }
@@ -75,8 +102,37 @@ public class OrderEntity {
         List<OrderLine> domainLines = lines.stream()
                 .map(line -> line.toDomain(cur))
                 .toList();
-        return new Order(id, customerId, status, domainLines, placedAt);
+        return new Order(id, customerId, status, domainLines, placedAt,
+                rejectionReason, recoveryBlocked ? lastFailureCode : null);
     }
+
+    public void finalizeInventory(boolean reserved) {
+        if (status != OrderStatus.PENDING_INVENTORY) return;
+        status = reserved ? OrderStatus.CONFIRMED : OrderStatus.REJECTED;
+        rejectionReason = reserved ? null : "STOCK_UNAVAILABLE";
+        nextAttemptAt = null;
+        recoveryBlocked = false;
+        lastFailureCode = null;
+    }
+
+    public void defer(String failureCode, Instant nextAttempt, Instant now) {
+        if (status != OrderStatus.PENDING_INVENTORY || recoveryBlocked) return;
+        attemptCount++;
+        lastAttemptAt = now;
+        lastFailureCode = failureCode;
+        nextAttemptAt = nextAttempt;
+    }
+
+    public void block(String issueCode, Instant now) {
+        if (status != OrderStatus.PENDING_INVENTORY || recoveryBlocked) return;
+        attemptCount++;
+        lastAttemptAt = now;
+        recoveryBlocked = true;
+        lastFailureCode = issueCode;
+        nextAttemptAt = null;
+    }
+
+    public int getAttemptCount() { return attemptCount; }
 
     public UUID getId() {
         return id;
