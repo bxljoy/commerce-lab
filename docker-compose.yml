@@ -31,11 +31,16 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orderdb
       SPRING_DATASOURCE_USERNAME: order
       SPRING_DATASOURCE_PASSWORD: order
+      INVENTORY_BASE_URL: ${INVENTORY_BASE_URL:-http://inventory-service:8081}
+      ORDER_RECOVERY_ENABLED: ${ORDER_RECOVERY_ENABLED:-true}
+      ORDER_RECOVERY_FIXED_DELAY_MS: ${ORDER_RECOVERY_FIXED_DELAY_MS:-5000}
+      ORDER_RECOVERY_BATCH_SIZE: ${ORDER_RECOVERY_BATCH_SIZE:-20}
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - order-network
+      - service-network
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
       interval: 10s
@@ -78,6 +83,7 @@ services:
         condition: service_healthy
     networks:
       - inventory-network
+      - service-network
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8081/actuator/health"]
       interval: 10s
@@ -93,3 +99,4 @@ volumes:
 networks:
   order-network:
   inventory-network:
+  service-network:

@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 SERVICE_DIR := order-service
 
-.PHONY: help build test test-order test-inventory verify verify-order verify-inventory verify-restart verify-inventory-image up down logs ps health clean
+.PHONY: help build test test-order test-inventory verify verify-order verify-inventory verify-restart verify-inventory-image verify-sync-recovery up down logs ps health clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -31,6 +31,9 @@ verify-restart: ## Build Compose stack and prove an order survives service resta
 
 verify-inventory-image: ## Build and smoke-test the inventory-service image
 	bash scripts/verify-inventory-service.sh
+
+verify-sync-recovery: ## Prove real inventory response loss and order restart recovery
+	bash scripts/verify-sync-recovery.sh
 
 up: ## Build images and start the stack (detached)
 	docker compose up --build -d

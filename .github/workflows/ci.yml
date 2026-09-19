@@ -56,3 +56,14 @@ jobs:
 
       - name: Build image and verify inventory behavior
         run: make verify-inventory-image
+
+      - name: Verify two-service response loss and restart recovery
+        run: make verify-sync-recovery
+
+      - name: Verify isolated Compose failure cleanup
+        run: |
+          for script in verify-order-restart verify-inventory-service verify-sync-recovery; do
+            status=0
+            VERIFY_FAIL_AFTER_START=1 bash "scripts/${script}.sh" || status=$?
+            test "$status" -eq 97
+          done

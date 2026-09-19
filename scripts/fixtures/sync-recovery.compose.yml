@@ -1,0 +1,13 @@
+services:
+  order-service:
+    environment:
+      INVENTORY_BASE_URL: http://fault-proxy:8082
+  fault-proxy:
+    image: python:3.13-alpine
+    command: ["python", "-u", "/fixtures/response-drop-proxy.py"]
+    volumes:
+      - ./scripts/fixtures/response-drop-proxy.py:/fixtures/response-drop-proxy.py:ro
+    ports:
+      - "127.0.0.1::8082"
+    networks:
+      - service-network
