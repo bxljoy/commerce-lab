@@ -1,0 +1,13 @@
+{
+  "status": 409,
+  "body": {
+    "type": "https://commerce-lab/errors/stock-unavailable",
+    "status": 409,
+    "unavailableSkus": {
+      "A": {
+        "requested": 2,
+        "available": 0
+      }
+    }
+  }
+}

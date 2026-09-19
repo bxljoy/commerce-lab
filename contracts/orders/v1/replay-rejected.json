@@ -1,0 +1,24 @@
+{
+  "status": 200,
+  "headers": {
+    "Location": "/api/v1/orders/{id}",
+    "Retry-After": null
+  },
+  "body": {
+    "id": "11111111-1111-4111-8111-111111111111",
+    "status": "REJECTED",
+    "currency": "EUR",
+    "totalAmount": 2,
+    "placedAt": "2026-09-19T12:00:00Z",
+    "lines": [
+      {
+        "sku": "A",
+        "quantity": 2,
+        "unitPrice": 1,
+        "lineTotal": 2
+      }
+    ],
+    "rejectionReason": "STOCK_UNAVAILABLE",
+    "recoveryIssue": null
+  }
+}

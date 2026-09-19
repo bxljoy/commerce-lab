@@ -1,0 +1,7 @@
+{
+  "status": 409,
+  "body": {
+    "type": "https://commerce-lab/errors/reservation-payload-conflict",
+    "status": 409
+  }
+}

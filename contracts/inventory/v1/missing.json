@@ -1,0 +1,7 @@
+{
+  "status": 404,
+  "body": {
+    "type": "https://commerce-lab/errors/reservation-not-found",
+    "status": 404
+  }
+}

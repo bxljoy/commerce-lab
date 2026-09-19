@@ -1,0 +1,8 @@
+{
+  "status": 409,
+  "headers": {},
+  "body": {
+    "type": "https://commerce-lab/errors/idempotency-conflict",
+    "status": 409
+  }
+}
