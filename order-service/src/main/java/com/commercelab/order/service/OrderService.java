@@ -1,12 +1,8 @@
 package com.commercelab.order.service;
 
-import com.commercelab.order.domain.Money;
 import com.commercelab.order.domain.Order;
-import com.commercelab.order.domain.OrderLine;
 import com.commercelab.order.domain.OrderNotFoundException;
 import com.commercelab.order.repository.OrderRepository;
-import java.util.Currency;
-import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,19 +16,16 @@ import org.springframework.transaction.annotation.Transactional;
 public class OrderService {
 
     private final OrderRepository repository;
+    private final OrderCreationService creation;
 
-    public OrderService(OrderRepository repository) {
+    public OrderService(OrderRepository repository, OrderCreationService creation) {
         this.repository = repository;
+        this.creation = creation;
     }
 
-    /** Build the order aggregate, persist it, and return it (status PLACED). */
-    @Transactional
-    public Order placeOrder(PlaceOrderCommand command) {
-        Currency currency = Currency.getInstance(command.currencyCode()); // IllegalArgumentException on bad code → 400
-        List<OrderLine> lines = command.lines().stream()
-                .map(line -> new OrderLine(line.sku(), line.quantity(), new Money(line.unitPrice(), currency)))
-                .toList();
-        return repository.add(Order.place(command.customerId(), lines));
+    /** Pending-only until the reservation coordinator is connected in Task 5. */
+    public OrderCreation placeOrder(String key, PlaceOrderCommand command, String correlationId) {
+        return creation.createOrReplay(key, command, correlationId);
     }
 
     /** Retrieve an order or throw {@link OrderNotFoundException} (→ 404). */

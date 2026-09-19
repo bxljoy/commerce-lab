@@ -43,10 +43,12 @@ class OrderApiIT extends AbstractPostgresIntegrationTest {
                 """;
 
         MvcResult created = mockMvc.perform(post("/api/v1/orders")
+                        .header("Idempotency-Key", "api-create")
                         .contentType(MediaType.APPLICATION_JSON).content(body))
-                .andExpect(status().isCreated())
+                .andExpect(status().isAccepted())
+                .andExpect(header().string("Retry-After", "5"))
                 .andExpect(header().exists("Location"))
-                .andExpect(jsonPath("$.status").value("PLACED"))
+                .andExpect(jsonPath("$.status").value("PENDING_INVENTORY"))
                 .andExpect(jsonPath("$.totalAmount").value(23.98))
                 .andReturn();
 
@@ -76,6 +78,7 @@ class OrderApiIT extends AbstractPostgresIntegrationTest {
                 """;
 
         mockMvc.perform(post("/api/v1/orders")
+                        .header("Idempotency-Key", "api-rounding")
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.title").value("Invalid order"))
@@ -96,6 +99,7 @@ class OrderApiIT extends AbstractPostgresIntegrationTest {
                 """;
 
         mockMvc.perform(post("/api/v1/orders")
+                        .header("Idempotency-Key", "api-range")
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.title").value("Validation failed"))

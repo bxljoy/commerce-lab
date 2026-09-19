@@ -40,6 +40,16 @@ class FlywayMigrationIT extends AbstractPostgresIntegrationTest {
             }
 
             assertThat(orderedSkus).containsExactly("SKU-FIRST", "SKU-SECOND");
+            try (Statement statement = connection.createStatement();
+                    ResultSet result = statement.executeQuery("SELECT status FROM " + schema + ".orders")) {
+                assertThat(result.next()).isTrue();
+                assertThat(result.getString(1)).isEqualTo("PLACED");
+            }
+            try (Statement statement = connection.createStatement();
+                    ResultSet result = statement.executeQuery("SELECT count(*) FROM " + schema + ".order_requests")) {
+                assertThat(result.next()).isTrue();
+                assertThat(result.getInt(1)).isZero();
+            }
         } finally {
             try (Connection connection = connection(); Statement statement = connection.createStatement()) {
                 statement.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");

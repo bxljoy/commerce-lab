@@ -74,7 +74,7 @@ class OrderDomainTest {
                 new OrderLine("SKU-2", 1, new Money(new BigDecimal("4.00"), EUR))));  // 4.00
 
         assertThat(order.total().amount()).isEqualByComparingTo("23.98");
-        assertThat(order.status()).isEqualTo(OrderStatus.PLACED);
+        assertThat(order.status()).isEqualTo(OrderStatus.PENDING_INVENTORY);
         assertThat(order.id()).isNotNull();
     }
 

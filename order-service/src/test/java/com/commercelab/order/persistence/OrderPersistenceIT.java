@@ -59,7 +59,7 @@ class OrderPersistenceIT extends AbstractPostgresIntegrationTest {
         Order loaded = adapter.findById(placed.id()).orElseThrow();
 
         assertThat(loaded.customerId()).isEqualTo("cust-1");
-        assertThat(loaded.status()).isEqualTo(OrderStatus.PLACED);
+        assertThat(loaded.status()).isEqualTo(OrderStatus.PENDING_INVENTORY);
         assertThat(loaded.currency()).isEqualTo(EUR);
         assertThat(loaded.lines()).extracting(OrderLine::sku)
                 .containsExactly("SKU-1", "SKU-2");

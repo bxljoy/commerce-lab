@@ -2,8 +2,8 @@ openapi: 3.0.3
 info:
   title: Order Service API
   description: |
-    Owns the Order aggregate and its lifecycle. Phase 1 exposes the two
-    operations that prove the slice end-to-end: place an order and retrieve it.
+    Owns the Order aggregate and its lifecycle, with durable creation identity
+    and pending inventory state. Create an order or retrieve its current state.
     This document is the source of truth — DTOs and the API interface are
     generated from it at build time (openapi-generator `spring`, interfaceOnly).
   version: 0.1.0
@@ -20,7 +20,22 @@ paths:
     post:
       tags: [orders]
       operationId: placeOrder
-      summary: Place a new order
+      summary: Create or replay an order
+      description: |
+        Task 3 creates pending orders only; synchronous inventory completion is connected in Task 5.
+        Matching keys replay current state. Line order is significant; decimal scale is not.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9._:-]{1,128}$'
+        - name: X-Correlation-ID
+          in: header
+          required: false
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -28,8 +43,18 @@ paths:
             schema:
               $ref: '#/components/schemas/PlaceOrderRequest'
       responses:
+        '200':
+          description: Matching replay of an existing terminal order.
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
         '201':
-          description: Order placed.
+          description: New order with a definitive inventory outcome (connected in Task 5).
           headers:
             Location:
               description: Canonical URI of the created order.
@@ -39,6 +64,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OrderResponse'
+        '202':
+          description: New or replayed order awaiting an inventory outcome.
+          headers:
+            Location:
+              schema:
+                type: string
+            Retry-After:
+              schema:
+                type: integer
+                example: 5
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '409':
+          description: Idempotency key reused with different valid content (idempotency-conflict).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
         '400':
           description: Request validation failed.
           content:
@@ -127,7 +172,14 @@ components:
           format: uuid
         status:
           type: string
-          enum: [PLACED, CONFIRMED, SHIPPED, CANCELLED]
+          enum: [PENDING_INVENTORY, CONFIRMED, REJECTED, PLACED, SHIPPED, CANCELLED]
+        rejectionReason:
+          type: string
+          nullable: true
+          enum: [STOCK_UNAVAILABLE]
+        recoveryIssue:
+          type: string
+          nullable: true
         currency:
           type: string
           example: EUR

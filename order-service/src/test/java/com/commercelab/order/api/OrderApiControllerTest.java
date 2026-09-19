@@ -14,6 +14,7 @@ import com.commercelab.order.domain.Order;
 import com.commercelab.order.domain.OrderLine;
 import com.commercelab.order.domain.OrderNotFoundException;
 import com.commercelab.order.service.OrderService;
+import com.commercelab.order.service.OrderCreation;
 import java.math.BigDecimal;
 import java.util.Currency;
 import java.util.List;
@@ -47,9 +48,9 @@ class OrderApiControllerTest {
     }
 
     @Test
-    void placeOrderReturns201WithLocationAndBody() throws Exception {
+    void placeOrderReturns202WithLocationAndBody() throws Exception {
         Order order = sampleOrder();
-        when(orderService.placeOrder(any())).thenReturn(order);
+        when(orderService.placeOrder(any(), any(), any())).thenReturn(new OrderCreation(order, true));
 
         String body = """
                 {
@@ -59,10 +60,12 @@ class OrderApiControllerTest {
                 }
                 """;
 
-        mockMvc.perform(post("/api/v1/orders").contentType(MediaType.APPLICATION_JSON).content(body))
-                .andExpect(status().isCreated())
+        mockMvc.perform(post("/api/v1/orders").header("Idempotency-Key", "key")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isAccepted())
+                .andExpect(header().string("Retry-After", "5"))
                 .andExpect(header().string("Location", containsString("/api/v1/orders/" + order.id())))
-                .andExpect(jsonPath("$.status").value("PLACED"))
+                .andExpect(jsonPath("$.status").value("PENDING_INVENTORY"))
                 .andExpect(jsonPath("$.currency").value("EUR"))
                 .andExpect(jsonPath("$.totalAmount").value(19.98))
                 .andExpect(jsonPath("$.lines[0].lineTotal").value(19.98));
@@ -74,7 +77,8 @@ class OrderApiControllerTest {
                 { "currency": "EU", "lines": [] }
                 """; // missing customerId, malformed currency, empty lines
 
-        mockMvc.perform(post("/api/v1/orders").contentType(MediaType.APPLICATION_JSON).content(invalid))
+        mockMvc.perform(post("/api/v1/orders").header("Idempotency-Key", "key")
+                        .contentType(MediaType.APPLICATION_JSON).content(invalid))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.title").value("Validation failed"))
                 .andExpect(jsonPath("$.errors").exists());
@@ -88,7 +92,7 @@ class OrderApiControllerTest {
         mockMvc.perform(get("/api/v1/orders/{id}", order.id()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(order.id().toString()))
-                .andExpect(jsonPath("$.status").value("PLACED"));
+                .andExpect(jsonPath("$.status").value("PENDING_INVENTORY"));
     }
 
     @Test

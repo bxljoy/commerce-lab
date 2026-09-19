@@ -37,9 +37,9 @@ public record Order(
         placedAt = Objects.requireNonNull(placedAt, "placedAt");
     }
 
-    /** Factory for a freshly placed order: server-assigned id, PLACED, stamped now. */
+    /** New orders await inventory; historical statuses remain readable. */
     public static Order place(String customerId, List<OrderLine> lines) {
-        return new Order(UUID.randomUUID(), customerId, OrderStatus.PLACED, lines, Instant.now());
+        return new Order(UUID.randomUUID(), customerId, OrderStatus.PENDING_INVENTORY, lines, Instant.now());
     }
 
     /** The order's currency, taken from its lines (all lines share one currency). */

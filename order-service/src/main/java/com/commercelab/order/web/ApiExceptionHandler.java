@@ -1,6 +1,7 @@
 package com.commercelab.order.web;
 
 import com.commercelab.order.domain.OrderNotFoundException;
+import com.commercelab.order.domain.IdempotencyConflictException;
 import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -27,6 +28,22 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static final String TYPE_BASE = "https://commerce-lab/errors/";
+
+    @ExceptionHandler(jakarta.validation.ConstraintViolationException.class)
+    public ProblemDetail handleConstraintViolation(jakarta.validation.ConstraintViolationException ex) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Request validation failed");
+        pd.setTitle("Validation failed");
+        pd.setType(URI.create(TYPE_BASE + "validation"));
+        return pd;
+    }
+
+    @ExceptionHandler(IdempotencyConflictException.class)
+    public ProblemDetail handleConflict(IdempotencyConflictException ex) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        pd.setTitle("Idempotency conflict");
+        pd.setType(URI.create(TYPE_BASE + "idempotency-conflict"));
+        return pd;
+    }
 
     @ExceptionHandler(OrderNotFoundException.class)
     public ProblemDetail handleNotFound(OrderNotFoundException ex) {

@@ -2,6 +2,7 @@ package com.commercelab.order.api;
 
 import com.commercelab.order.domain.Order;
 import com.commercelab.order.domain.OrderLine;
+import com.commercelab.order.domain.OrderStatus;
 import com.commercelab.order.generated.api.OrdersApi;
 import com.commercelab.order.generated.model.OrderLineResponse;
 import com.commercelab.order.generated.model.OrderResponse;
@@ -31,17 +32,29 @@ public class OrderApiController implements OrdersApi {
     }
 
     @Override
-    public ResponseEntity<OrderResponse> placeOrder(PlaceOrderRequest request) {
+    public ResponseEntity<OrderResponse> placeOrder(String idempotencyKey, PlaceOrderRequest request,
+            String xCorrelationID) {
         PlaceOrderCommand command = new PlaceOrderCommand(
                 request.getCustomerId(),
                 request.getCurrency(),
                 request.getLines().stream()
-                        .map(line -> new PlaceOrderCommand.Line(line.getSku(), line.getQuantity(), line.getUnitPrice()))
+                        .map(line -> {
+                            if (line == null || line.getQuantity() == null) {
+                                throw new IllegalArgumentException("order lines and quantities must not be null");
+                            }
+                            return new PlaceOrderCommand.Line(line.getSku(), line.getQuantity(), line.getUnitPrice());
+                        })
                         .toList());
-        Order order = orderService.placeOrder(command);
-        return ResponseEntity
-                .created(URI.create("/api/v1/orders/" + order.id()))
-                .body(toResponse(order));
+        String correlationId = xCorrelationID != null && xCorrelationID.matches("[A-Za-z0-9._:-]{1,128}")
+                ? xCorrelationID : UUID.randomUUID().toString();
+        var creation = orderService.placeOrder(idempotencyKey, command, correlationId);
+        Order order = creation.order();
+        boolean pending = order.status() == OrderStatus.PENDING_INVENTORY;
+        var response = ResponseEntity.status(pending ? 202 : creation.created() ? 201 : 200)
+                .location(URI.create("/api/v1/orders/" + order.id()))
+                .header("X-Correlation-ID", correlationId);
+        if (pending) response.header("Retry-After", "5");
+        return response.body(toResponse(order));
     }
 
     @Override

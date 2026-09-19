@@ -2,6 +2,7 @@ package com.commercelab.order.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 import com.commercelab.order.domain.Order;
 import com.commercelab.order.domain.OrderNotFoundException;
@@ -14,26 +15,29 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Service unit tests against the real in-memory repository (fast, no Spring context, no
- * mocks needed). The HTTP boundary is covered separately by the @WebMvcTest slice.
+ * Read-service unit tests against the real in-memory repository. Atomic creation
+ * is covered against PostgreSQL in OrderIdempotencyIT.
  */
 class OrderServiceTest {
 
     private OrderService service;
+    private InMemoryOrderRepository repository;
 
     @BeforeEach
     void setUp() {
-        service = new OrderService(new InMemoryOrderRepository());
+        repository = new InMemoryOrderRepository();
+        service = new OrderService(repository, mock(OrderCreationService.class));
     }
 
     @Test
-    void placeOrderPersistsPlacedOrderWithComputedTotal() {
+    void getOrderReturnsPersistedPendingOrderWithComputedTotal() {
         PlaceOrderCommand command = new PlaceOrderCommand("cust-1", "EUR", List.of(
                 new PlaceOrderCommand.Line("SKU-1", 2, new BigDecimal("9.99"))));
 
-        Order placed = service.placeOrder(command);
+        var payload = OrderPayload.from(command);
+        Order placed = repository.add(Order.place(payload.customerId(), payload.lines()));
 
-        assertThat(placed.status()).isEqualTo(OrderStatus.PLACED);
+        assertThat(placed.status()).isEqualTo(OrderStatus.PENDING_INVENTORY);
         assertThat(placed.total().amount()).isEqualByComparingTo("19.98");
         assertThat(service.getOrder(placed.id())).isEqualTo(placed);
     }
@@ -45,11 +49,11 @@ class OrderServiceTest {
     }
 
     @Test
-    void placeOrderRejectsUnknownCurrencyCode() {
+    void creationPayloadRejectsUnknownCurrencyCode() {
         PlaceOrderCommand command = new PlaceOrderCommand("cust-1", "ZZZ", List.of(
                 new PlaceOrderCommand.Line("SKU-1", 1, BigDecimal.ONE)));
 
-        assertThatThrownBy(() -> service.placeOrder(command))
+        assertThatThrownBy(() -> OrderPayload.from(command))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

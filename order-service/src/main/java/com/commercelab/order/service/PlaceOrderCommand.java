@@ -10,5 +10,10 @@ import java.util.List;
  */
 public record PlaceOrderCommand(String customerId, String currencyCode, List<Line> lines) {
 
+    public PlaceOrderCommand {
+        // Keep null input representable so the creation boundary can return a validation error.
+        if (lines != null) lines = java.util.Collections.unmodifiableList(new java.util.ArrayList<>(lines));
+    }
+
     public record Line(String sku, int quantity, BigDecimal unitPrice) {}
 }
