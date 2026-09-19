@@ -37,6 +37,16 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 @ExtendWith(OutputCaptureExtension.class)
 class OrderIdempotencyIT extends AbstractPostgresIntegrationTest {
+    static final com.commercelab.order.inventory.UnavailableInventoryFixture INVENTORY =
+            new com.commercelab.order.inventory.UnavailableInventoryFixture();
+
+    @org.springframework.test.context.DynamicPropertySource
+    static void inventory(org.springframework.test.context.DynamicPropertyRegistry registry) {
+        registry.add("inventory.base-url", INVENTORY::url);
+    }
+
+    @org.junit.jupiter.api.AfterAll
+    static void closeInventory() { INVENTORY.close(); }
     @Autowired OrderCreationService creation;
     @Autowired JdbcTemplate jdbc;
     @Autowired MockMvc mvc;

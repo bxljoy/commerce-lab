@@ -26,7 +26,7 @@ class OrderServiceTest {
     @BeforeEach
     void setUp() {
         repository = new InMemoryOrderRepository();
-        service = new OrderService(repository, mock(OrderCreationService.class));
+        service = new OrderService(repository, mock(OrderCreationService.class), mock(OrderReservationCoordinator.class));
     }
 
     @Test

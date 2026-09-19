@@ -45,8 +45,9 @@ public class OrderApiController implements OrdersApi {
                             return new PlaceOrderCommand.Line(line.getSku(), line.getQuantity(), line.getUnitPrice());
                         })
                         .toList());
-        String correlationId = xCorrelationID != null && xCorrelationID.matches("[A-Za-z0-9._:-]{1,128}")
-                ? xCorrelationID : UUID.randomUUID().toString();
+        String contextId = org.slf4j.MDC.get("correlationId");
+        String correlationId = com.commercelab.order.web.CorrelationIdFilter.validOrNew(
+                contextId == null ? xCorrelationID : contextId);
         var creation = orderService.placeOrder(idempotencyKey, command, correlationId);
         Order order = creation.order();
         boolean pending = order.status() == OrderStatus.PENDING_INVENTORY;

@@ -17,15 +17,17 @@ public class OrderService {
 
     private final OrderRepository repository;
     private final OrderCreationService creation;
+    private final OrderReservationCoordinator reservations;
 
-    public OrderService(OrderRepository repository, OrderCreationService creation) {
+    public OrderService(OrderRepository repository, OrderCreationService creation, OrderReservationCoordinator reservations) {
         this.repository = repository;
         this.creation = creation;
+        this.reservations = reservations;
     }
 
-    /** Pending-only until the reservation coordinator is connected in Task 5. */
     public OrderCreation placeOrder(String key, PlaceOrderCommand command, String correlationId) {
-        return creation.createOrReplay(key, command, correlationId);
+        OrderCreation result = creation.createOrReplay(key, command, correlationId);
+        return result.created() ? new OrderCreation(reservations.attempt(result.order().id()), true) : result;
     }
 
     /** Retrieve an order or throw {@link OrderNotFoundException} (→ 404). */
