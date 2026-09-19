@@ -1,6 +1,8 @@
 spring:
   application:
     name: order-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
   mvc:
     problemdetails:
       # Return RFC-7807 application/problem+json for Spring's built-in MVC exceptions
@@ -21,6 +23,17 @@ spring:
           batch_size: 50             # write-side: collapse saveAll round-trips
   flyway:
     enabled: true                    # runs db/migration/V*.sql on startup, before JPA validation
+
+order:
+  outbox:
+    enabled: ${OUTBOX_ENABLED:true}
+    poll-interval-ms: 1000
+    max-attempts-per-pass: 20
+    lease-ms: 60000
+    ack-wait-ms: 12000
+    max-block-ms: 2000
+    delivery-timeout-ms: 10000
+    request-timeout-ms: 3000
 
 server:
   port: 8080
