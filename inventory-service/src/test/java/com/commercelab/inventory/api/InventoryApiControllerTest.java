@@ -1,5 +1,6 @@
 package com.commercelab.inventory.api;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.when;
@@ -29,6 +30,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.slf4j.MDC;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
@@ -36,6 +41,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(InventoryApiController.class)
+@ExtendWith(OutputCaptureExtension.class)
 class InventoryApiControllerTest {
 
     private static final UUID ORDER_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
@@ -47,6 +53,51 @@ class InventoryApiControllerTest {
 
     @MockBean
     private InventoryService inventoryService;
+
+    @Test
+    void receivingLogsDecodedIdentityOnReserveRejectionGetAndRelease(CapturedOutput output) throws Exception {
+        when(inventoryService.reserve(any()))
+                .thenReturn(new ReservationAttemptResult.Accepted(reserved(), true))
+                .thenReturn(new ReservationAttemptResult.Rejected(Map.of("SKU-BANANA", new Availability(2, 0))));
+        when(inventoryService.getAttempt(ORDER_ID))
+                .thenReturn(new ReservationAttemptResult.Accepted(reserved(), false));
+        when(inventoryService.release(ORDER_ID)).thenReturn(released());
+
+        mockMvc.perform(post("/api/v1/reservations").header("X-Correlation-ID", "identity:reserve")
+                        .contentType(MediaType.APPLICATION_JSON).content(validBody()))
+                .andExpect(status().isCreated());
+        assertIdentityLog(output, "identity:reserve", "POST", 201);
+
+        mockMvc.perform(post("/api/v1/reservations").header("X-Correlation-ID", "identity:rejected")
+                        .contentType(MediaType.APPLICATION_JSON).content(validBody()))
+                .andExpect(status().isConflict());
+        assertIdentityLog(output, "identity:rejected", "POST", 409);
+
+        mockMvc.perform(get("/api/v1/reservations/{orderId}", ORDER_ID)
+                        .header("X-Correlation-ID", "identity:get"))
+                .andExpect(status().isOk());
+        assertIdentityLog(output, "identity:get", "GET", 200);
+
+        mockMvc.perform(put("/api/v1/reservations/{orderId}/release", ORDER_ID)
+                        .header("X-Correlation-ID", "identity:release"))
+                .andExpect(status().isOk());
+        assertIdentityLog(output, "identity:release", "PUT", 200);
+
+        when(inventoryService.getStock("SKU-APPLE")).thenReturn(new StockItem("SKU-APPLE", 8));
+        mockMvc.perform(get("/api/v1/stock/SKU-APPLE").header("X-Correlation-ID", "identity:next"))
+                .andExpect(status().isOk());
+        assertThat(output.getAll().lines().filter(line -> line.contains("correlationId=identity:next")))
+                .allSatisfy(line -> assertThat(line).doesNotContain(ORDER_ID.toString()));
+        assertThat(output.getAll()).doesNotContain("SKU-BANANA", "SKU-APPLE", "\"lines\"");
+    }
+
+    private static void assertIdentityLog(CapturedOutput output, String correlation, String method, int status) {
+        assertThat(output.getAll().lines().filter(line -> line.contains("correlationId=" + correlation)))
+                .singleElement().asString().contains("orderId=" + ORDER_ID, "operation=" + method,
+                        "status=" + status, "latencyMs=");
+        assertThat(MDC.get("correlationId")).isNull();
+        assertThat(MDC.get("orderId")).isNull();
+    }
 
     @Test
     void reserveReturns201WithRelativeLocationAndLinesInRequestOrder() throws Exception {

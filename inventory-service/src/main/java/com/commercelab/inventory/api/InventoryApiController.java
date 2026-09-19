@@ -14,6 +14,8 @@ import com.commercelab.inventory.generated.model.StockResponse;
 import com.commercelab.inventory.service.InventoryService;
 import com.commercelab.inventory.service.ReservationAttemptResult;
 import com.commercelab.inventory.service.ReserveInventoryCommand;
+import com.commercelab.inventory.web.CorrelationIdFilter;
+import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import java.time.ZoneOffset;
 import java.util.UUID;
@@ -24,13 +26,16 @@ import org.springframework.stereotype.Controller;
 public class InventoryApiController implements InventoryApi {
 
     private final InventoryService service;
+    private final HttpServletRequest servletRequest;
 
-    public InventoryApiController(InventoryService service) {
+    public InventoryApiController(InventoryService service, HttpServletRequest servletRequest) {
         this.service = service;
+        this.servletRequest = servletRequest;
     }
 
     @Override
     public ResponseEntity<ReservationResponse> reserveInventory(ReserveInventoryRequest request) {
+        servletRequest.setAttribute(CorrelationIdFilter.ORDER_ID_ATTRIBUTE, request.getOrderId());
         var accepted = accepted(service.reserve(toCommand(request)));
         Reservation reservation = accepted.reservation();
         return ResponseEntity.status(accepted.created() ? 201 : 200)
@@ -40,6 +45,7 @@ public class InventoryApiController implements InventoryApi {
 
     @Override
     public ResponseEntity<ReservationResponse> getReservation(UUID orderId) {
+        servletRequest.setAttribute(CorrelationIdFilter.ORDER_ID_ATTRIBUTE, orderId);
         return ResponseEntity.ok(toResponse(accepted(service.getAttempt(orderId)).reservation()));
     }
 
@@ -53,6 +59,7 @@ public class InventoryApiController implements InventoryApi {
 
     @Override
     public ResponseEntity<ReservationResponse> releaseReservation(UUID orderId) {
+        servletRequest.setAttribute(CorrelationIdFilter.ORDER_ID_ATTRIBUTE, orderId);
         return ResponseEntity.ok(toResponse(service.release(orderId)));
     }
 

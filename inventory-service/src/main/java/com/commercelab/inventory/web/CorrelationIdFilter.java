@@ -18,6 +18,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class CorrelationIdFilter extends OncePerRequestFilter {
     public static final String HEADER = "X-Correlation-ID";
+    public static final String ORDER_ID_ATTRIBUTE = CorrelationIdFilter.class.getName() + ".orderId";
     private static final Logger log = LoggerFactory.getLogger(CorrelationIdFilter.class);
 
     public static String validOrNew(String value) {
@@ -36,9 +37,11 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
         try {
             chain.doFilter(request, response);
         } finally {
-            log.info("correlationId={} operation={} status={} latencyMs={}",
-                    correlationId, request.getMethod(), response.getStatus(),
+            Object identity = request.getAttribute(ORDER_ID_ATTRIBUTE);
+            log.info("orderId={} correlationId={} operation={} status={} latencyMs={}",
+                    identity instanceof UUID ? identity : null, correlationId, request.getMethod(), response.getStatus(),
                     (System.nanoTime() - start) / 1_000_000);
+            request.removeAttribute(ORDER_ID_ATTRIBUTE);
             MDC.remove("correlationId");
         }
     }

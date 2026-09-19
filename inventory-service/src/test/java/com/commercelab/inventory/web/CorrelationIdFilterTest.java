@@ -11,6 +11,27 @@ import org.slf4j.MDC;
 
 @ExtendWith(OutputCaptureExtension.class)
 class CorrelationIdFilterTest {
+    @Test void logsOnlyTypedIdentityAndClearsItEvenOnException(CapturedOutput output) throws Exception {
+        var id = java.util.UUID.randomUUID();
+        var request = new MockHttpServletRequest("POST", "/api/v1/reservations");
+        request.addHeader("X-Correlation-ID", "identity:failure");
+        assertThatThrownBy(() -> new CorrelationIdFilter().doFilter(request, new MockHttpServletResponse(), (req, res) -> {
+            req.setAttribute(CorrelationIdFilter.ORDER_ID_ATTRIBUTE, id);
+            throw new jakarta.servlet.ServletException("failure");
+        })).isInstanceOf(jakarta.servlet.ServletException.class);
+        assertThat(output.getAll()).contains("orderId=" + id + " correlationId=identity:failure");
+        assertThat(request.getAttribute(CorrelationIdFilter.ORDER_ID_ATTRIBUTE)).isNull();
+        assertThat(MDC.get("correlationId")).isNull();
+        assertThat(MDC.get("orderId")).isNull();
+
+        var next = new MockHttpServletRequest();
+        new CorrelationIdFilter().doFilter(next, new MockHttpServletResponse(), (req, res) ->
+                req.setAttribute(CorrelationIdFilter.ORDER_ID_ATTRIBUTE, "unsafe-identity\nraw-body"));
+        assertThat(output.getAll()).doesNotContain("unsafe-identity", "raw-body");
+        assertThat(next.getAttribute(CorrelationIdFilter.ORDER_ID_ATTRIBUTE)).isNull();
+        assertThat(MDC.get("correlationId")).isNull();
+    }
+
     @Test void acceptsEchoesAndLogsCorrelationWithCleanup(CapturedOutput output) throws Exception {
         var request = new MockHttpServletRequest("POST", "/api/v1/reservations");
         request.addHeader("X-Correlation-ID", "test:origin-1");
