@@ -1,7 +1,7 @@
 # Phase 3B Synchronous Integration Design
 
 Date: 2026-09-19
-Status: Draft for review; incorporates the conversation-approved decisions below.
+Status: Approved in conversation on 2026-09-19; implementation in progress.
 
 ## Goal and scope
 
@@ -28,8 +28,8 @@ authentication, stock administration, and the frontend remain later work.
   rejection and other HTTP 4xx responses are not automatically retried.
 - Existing `PLACED` orders remain historical and are excluded from recovery.
 
-The detailed policies below make these decisions executable. They are proposed
-defaults for review, not claims about implemented behavior.
+The detailed policies below make these decisions executable. They are approved
+implementation requirements, not claims about verified behavior.
 
 ## Approaches considered
 

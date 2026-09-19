@@ -1,7 +1,7 @@
 # ADR-0007: Synchronous Reservation and Recovery
 
 Date: 2026-09-19
-Status: Proposed; core choices approved in conversation, detailed design for review.
+Status: Accepted on 2026-09-19; implementation and verification in progress.
 
 ## Context
 

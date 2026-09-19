@@ -16,7 +16,8 @@ OpenAPI Generator 7.10.0, Testcontainers, and a compatible pinned Resilience4j v
 
 **Spec:** [Phase 3B design](../specs/2026-09-19-phase-3b-sync-integration-design.md).
 
-**Status:** Draft for review. No implementation task has started.
+**Status:** Approved on 2026-09-19; implementation in progress on
+`codex/phase-3b-sync-integration`. Execution evidence is tracked per task.
 
 ## Global constraints
 
