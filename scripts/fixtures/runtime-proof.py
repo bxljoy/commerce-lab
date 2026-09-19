@@ -1,8 +1,6 @@
 """Assertions against built service images; stdlib only, never imported by production."""
-import hashlib
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import time
@@ -85,17 +83,6 @@ def order(base, order_id, status, deadline=None):
     return value
 
 
-def await_confirmed(base, order_id):
-    deadline = Deadline(90, "order confirmation")
-    while True:
-        value = request(base, "/api/v1/orders/" + order_id, 200, deadline=deadline)[0]
-        assert value["id"] == order_id and value["recoveryIssue"] is None, value
-        if value["status"] == "CONFIRMED":
-            return value
-        assert value["status"] == "PENDING_INVENTORY", value
-        deadline.sleep()
-
-
 def assert_services(expected, deadline=None):
     actual = set(compose("ps", "--services", "--status", "running", timeout=10, deadline=deadline).splitlines())
     assert actual == set(expected), actual
@@ -161,102 +148,6 @@ def inventory_proof():
     print(f"PASS inventory image: new201/replay200, GET200/409/404, release twice + released replay; stock restored={before}")
 
 
-def network_proof():
-    shared = os.environ["COMPOSE_PROJECT_NAME"] + "_service-network"
-    for service in ("order-service", "inventory-service", "postgres", "inventory-postgres"):
-        container = compose("ps", "-q", service)
-        networks = json.loads(docker("inspect", "--format", "{{json .NetworkSettings.Networks}}", container,
-                                     timeout=10))
-        assert (shared in networks) == service.endswith("-service"), (service, networks)
-    # Direct app-to-app DNS/HTTP, independent of the injected proxy route.
-    compose("exec", "-T", "order-service", "curl", "--max-time", "5", "-fsS",
-            "http://inventory-service:8081/actuator/health")
-    print("PASS live networks: apps communicate, neither database attached to service-network", flush=True)
-
-
-def sync_proof():
-    base, inventory, proxy = (os.environ[key] for key in ("ORDER_URL", "INVENTORY_URL", "PROXY_URL"))
-    network_proof()
-    before = stock(inventory)
-    assert before == {"SKU-APPLE": 10, "SKU-BANANA": 5}, before
-    key = str(uuid.uuid4())
-    payload = {"customerId": "lost-response", "currency": "EUR", "lines": [
-        {"sku": "SKU-APPLE", "quantity": 2, "unitPrice": 9.99},
-        {"sku": "SKU-BANANA", "quantity": 1, "unitPrice": 4}]}
-    created, headers = request(base, "/api/v1/orders", 202, "POST", payload, key)
-    order_id = created["id"]
-    assert created["status"] == "PENDING_INVENTORY" and headers["Retry-After"] == "5", created
-    stats = request(proxy, "/__control", 200)[0]
-    assert [event["status"] for event in stats["dropped"]] == [201, 200], stats
-    assert all(event["orderId"] == order_id for event in stats["dropped"]), stats
-    assert len(stats["forwarded"]) == 2, stats
-    reservation = request(inventory, "/api/v1/reservations/" + order_id, 200)[0]
-    assert reservation["orderId"] == order_id and reservation["status"] == "RESERVED", reservation
-    reserved = stock(inventory)
-    assert reserved == {"SKU-APPLE": 8, "SKU-BANANA": 4}, reserved
-    replay = request(base, "/api/v1/orders", 202, "POST", payload, key)[0]
-    assert replay["id"] == order_id
-    assert request(proxy, "/__control", 200)[0]["forwarded"] == stats["forwarded"]
-    compose("restart", "order-service")
-    base = order_url()
-    wait_health(base)
-    order(base, order_id, "PENDING_INVENTORY")
-    assert stock(inventory) == reserved
-    request(proxy, "/__control", 200, "POST", {"mode": "pass"})
-    await_confirmed(base, order_id)
-    terminal = request(base, "/api/v1/orders", 200, "POST", payload, key)[0]
-    assert terminal["id"] == order_id and terminal["status"] == "CONFIRMED", terminal
-    assert stock(inventory) == reserved
-    stats = request(proxy, "/__control", 200)[0]
-    assert len(stats["dropped"]) == 2, stats
-    assert len([event for event in stats["forwarded"] if event["method"] == "POST"]) == 2, stats
-    print(f"PASS response loss: dropped=2 upstreamStatuses=[201,200] sameID={order_id} pending->restart->confirmed stockBefore={before} stockAfterReserve={reserved} stockAfterRecovery={stock(inventory)}", flush=True)
-
-    # A controlled DB fixture represents committed local creation before ANY HTTP.
-    compose("stop", "order-service")
-    fixture_id, fixture_key = str(uuid.uuid4()), str(uuid.uuid4())
-    fixture_payload = {"customerId": "before-attempt-fixture", "currency": "EUR", "lines": [
-        {"sku": "SKU-APPLE", "quantity": 1, "unitPrice": "2.5"}]}
-    canonical = json.dumps(fixture_payload, separators=(",", ":"))
-    compose("exec", "-T", "postgres", "psql", "-U", "order", "-d", "orderdb", "-v", "ON_ERROR_STOP=1",
-            "-v", "id=" + fixture_id, "-v", "line_id=" + str(uuid.uuid4()), "-v", "key=" + fixture_key,
-            "-v", "canonical=" + canonical, "-v", "fingerprint=" + hashlib.sha256(canonical.encode()).hexdigest(),
-            input=Path("scripts/fixtures/pending-before-attempt.sql").read_text())
-    assert compose("exec", "-T", "postgres", "psql", "-U", "order", "-d", "orderdb", "-Atc",
-                   f"SELECT status || ':' || attempt_count FROM orders WHERE id='{fixture_id}'") == "PENDING_INVENTORY:0"
-    request(inventory, "/api/v1/reservations/" + fixture_id, 404)
-    assert stock(inventory) == reserved
-    assert all(event.get("orderId") != fixture_id for event in stats["forwarded"])
-    compose("start", "order-service")
-    base = order_url()
-    wait_health(base)
-    await_confirmed(base, fixture_id)
-    fixture_payload["lines"][0]["unitPrice"] = 2.5
-    replay = request(base, "/api/v1/orders", 200, "POST", fixture_payload, fixture_key)[0]
-    assert replay["id"] == fixture_id and replay["status"] == "CONFIRMED", replay
-    assert request(inventory, "/api/v1/reservations/" + fixture_id, 200)[0]["status"] == "RESERVED"
-    after = stock(inventory)
-    assert after == {"SKU-APPLE": 7, "SKU-BANANA": 4}, after
-    events = request(proxy, "/__control", 200)[0]["forwarded"]
-    fixture_events = [event for event in events if event.get("orderId") == fixture_id
-                      or event["path"] == "/api/v1/reservations/" + fixture_id]
-    assert [(event["method"], event["status"]) for event in fixture_events] == [("GET", 404), ("POST", 201)], fixture_events
-    print(f"PASS pre-attempt DB fixture (NOT HTTP crash injection): sameID={fixture_id}, attemptCountBefore=0, remoteBefore=404, recovery=GET404+POST201, stockBefore={reserved} stockAfter={after}")
-
-    # Normal real-producer terminal paths, separate from the fault stock checkpoints.
-    for quantity, expected_status in ((1, "CONFIRMED"), (100, "REJECTED")):
-        intent = {"customerId": "terminal-smoke", "currency": "EUR", "lines": [
-            {"sku": "SKU-BANANA", "quantity": quantity, "unitPrice": 4}]}
-        terminal_key = str(uuid.uuid4())
-        terminal = request(base, "/api/v1/orders", 201, "POST", intent, terminal_key)[0]
-        assert terminal["status"] == expected_status, terminal
-        replay = request(base, "/api/v1/orders", 200, "POST", intent, terminal_key)[0]
-        assert replay["id"] == terminal["id"] and replay["status"] == expected_status, replay
-        assert stock(inventory) == {"SKU-APPLE": 7, "SKU-BANANA": 3}
-    assert terminal["rejectionReason"] == "STOCK_UNAVAILABLE", terminal
-    print("PASS real-producer terminal order responses: new201 CONFIRMED/REJECTED, replay200, rejection/replay leave stock unchanged")
-
-
 if __name__ == "__main__":
     if sys.argv[1] == "command":
         # Streaming shell commands get a wall-clock bound without swallowing their diagnostics.
@@ -269,4 +160,4 @@ if __name__ == "__main__":
     elif sys.argv[1] == "health":
         wait_health(sys.argv[2])
     else:
-        {"restart": restart_proof, "inventory": inventory_proof, "sync": sync_proof}[sys.argv[1]]()
+        {"restart": restart_proof, "inventory": inventory_proof}[sys.argv[1]]()

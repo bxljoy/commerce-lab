@@ -2,7 +2,11 @@
 
 Date: 2026-09-19
 Status: Accepted on 2026-09-19 after design review and locally verified implementation.
-Whole-branch review and scoped fixes are complete. Hosted CI remains pending; not a merge authorization.
+Phase 3B merged at `ca525d1a8b4e65fe747d60824fc3c2e517e11074`, with
+[successful hosted CI](https://github.com/bxljoy/commerce-lab/actions/runs/35453124768).
+The active order path is superseded by
+[ADR-0008](0008-transactional-outbox-and-polling-relay.md); inventory HTTP replay
+semantics remain in use. The decision and historical evidence below are preserved.
 
 ## Context
 
@@ -92,5 +96,5 @@ networks, and does not make order startup depend on inventory. Proofs use isolat
 projects/ephemeral ports and verify owned-resource cleanup, including deliberate
 failure paths. Deploy inventory replay support before order integration; no
 mixed-version rolling-upgrade guarantee is made. Exact environment and evidence
-are in the [scoreboard](../notes-verification.md). Hosted CI is configured but not
-yet run on this unpushed branch.
+are in the [scoreboard](../notes-verification.md). These are Phase 3B historical
+results; its hosted CI subsequently succeeded as linked above, not evidence for 4A.

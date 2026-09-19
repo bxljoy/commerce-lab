@@ -22,8 +22,8 @@ See [ADR-0004](adr/0004-evidence-driven-learning-roadmap.md) for the revised sco
 | 1 | One service done right (OpenAPI-first, layered, validation, RFC-7807, unit/slice tests) | ✅ |
 | 2 | Reliable Postgres persistence and bounded cleanup | ✅ |
 | 3A | Inventory correctness under tested PostgreSQL contention shapes | ✅ |
-| 3B | Sync integration, idempotency, uncertain-outcome recovery | 🟡 Locally verified and reviewed; hosted CI pending |
-| 4A | Durable event delivery through an outbox | ⬜ |
+| 3B | Sync integration, idempotency, uncertain-outcome recovery | ✅ Merged at ca525d1; hosted CI succeeded |
+| 4A | Durable event delivery through an outbox | 🟡 Locally verified; final review and hosted CI pending |
 | 4B | Workflow recovery, compensation, idempotent consumers, DLQ | ⬜ |
 | 5 | Observability — logs/metrics/traces across the system | ⬜ |
 | 6 | Frontend slice + E2E; core finish line | ⬜ |
@@ -141,6 +141,12 @@ retries, and uncertain-outcome recovery remain Phase 3B work.
 
 ### Phase 3B: synchronous integration
 
+Historical baseline: `ca525d1a8b4e65fe747d60824fc3c2e517e11074`, merged with
+[successful hosted CI](https://github.com/bxljoy/commerce-lab/actions/runs/35453124768).
+Counts, sync test names and commands in this section describe that baseline,
+not the active 4A path. Use the README's separate baseline checkout to reproduce
+retired sync scripts and operator procedures. Independent inventory proof remains active.
+
 Binding [design](superpowers/specs/2026-09-19-phase-3b-sync-integration-design.md)
 and [ADR-0007](adr/0007-synchronous-reservation-and-recovery.md).
 
@@ -205,20 +211,101 @@ Both were fixed and the image proofs rerun. Two additional stdlib proxy framing
 tests pass, separate from the 239 Maven tests. Cleanup cannot be guaranteed after
 SIGKILL, host loss or an unavailable Docker daemon; no global prune is used.
 
-Hosted CI has the new runtime and deliberate failure-cleanup steps but **remains
-pending on this unpushed branch**. Local execution does not substitute for a hosted
-run. Whole-branch review and scoped re-review are complete: the recovered-shortage
-validation finding was reproduced, fixed, and verified on the final Java tree and
-rebuilt image. Plan progress and relevant vault notes are updated. No merge or push
-has been performed; hosted CI is the remaining external phase gate.
+Phase 3B whole-branch review and scoped re-review completed before its merge:
+the recovered-shortage validation finding was reproduced, fixed, and verified on
+that Java tree and rebuilt image. Its hosted run succeeded as linked above.
+This history is not a review or hosted-CI claim for Phase 4A. Vault updates are
+owned by the controller and are not part of Task 6's worktree changes.
 
 ### Phase 4A: durable event delivery
 
-- [ ] Order and outbox entry commit or roll back together.
-- [ ] Restart after commit but before publish; committed work eventually reaches the broker.
-- [ ] Crash after broker acknowledgement but before marking delivery; demonstrate
-  possible duplicates and preserve a stable event ID.
-- [ ] Document event schema, partition key, publication ordering, and relay retries.
+Implementation and local image evidence recorded on 2026-09-19.
+**Final whole-branch review and hosted CI pending.** This is implementer
+self-review, not independent review or phase-exit/merge authorization. Controller
+owns task review, final review, vault updates and final evidence wording.
+
+- [x] Order, request identity and outbox entry commit or roll back together.
+- [x] Restart after HTTP commit but before publication recovers the original event.
+- [x] Actual process kill after acknowledgement/before recording demonstrates
+  duplicate publication with stable ID/key/payload at different offsets.
+- [x] Event schema, partition key, ordering limits, retries and upgrade runbook documented.
+- [x] Make/CI includes outbox, restart, independent inventory and all three cleanup failures.
+- [ ] Final whole-branch review after controller task review.
+- [ ] Hosted Phase 4A CI after separately authorized publication.
+
+Fresh `make verify`: **234 passed, 0 failures/errors/skips**:
+order 92 Surefire + 58 Failsafe = 150; inventory 48 + 36 = 84.
+Final run followed clean targets after deleting unused sync-only 201 contract
+examples: order finished 22:17:11+02:00 (01:04 min), inventory 22:17:25+02:00
+(13.778 s). Historical terminal replay fixtures remain. Those removed examples
+are outside both image build contexts; all 140 frozen source/proof entries matched
+after the six image runs and again after the final service verification.
+Four new `CiStructureTest` cases were observed red (4 failures, no errors/skips)
+before Make/CI changes, then green. Fifteen Python proof/parser/deadline tests pass
+separately, not included in the Maven count. Bash syntax checks pass.
+
+Environment: macOS 26.6.2 aarch64, Corretto 21.0.5, Maven 3.9.14,
+OrbStack Docker Engine 29.4.0/API 1.54 linux/arm64, client 29.2.1 and Compose 5.1.2.
+Real fixtures: `postgres:16-alpine`, `apache/kafka:3.7.1`; Kafka digest
+`sha256:ed74d7d115968d5e8b00ba6822ac6a384cbaaf54ca38991828647000d7089b68`.
+Managed Spring Kafka 3.2.4 / clients 3.7.1; Testcontainers 1.20.4.
+No AMD64 execution or broker HA claim.
+
+| Claim | Current executable evidence | Limit |
+|---|---|---|
+| Atomic creation, conflict rollback and one logical event | `OrderOutboxCreationIT`, `OrderIdempotencyIT` | PostgreSQL races and injected rollback boundaries, not distributed atomicity |
+| Fresh/terminal migration, pending/blocked guard, historical replay without event | `OutboxMigrationIT`, `FlywayMigrationIT`, `OrderPublicContractIT` | Stop old writers; no mixed-version upgrade or automatic downgrade |
+| Immutable event, stable key/destination, deliberate invalid examples | `OrderPlacedEventTest`, `KafkaOutboxIT` | Focused assertions, not a general schema validator |
+| Claim competition, expired leases, delivered exclusion and stale-token writes | `OutboxDeliveryStoreIT`, `OutboxRelayTest`, `OutboxRetryPolicyTest` | Bookkeeping tokens do not fence late Kafka sends |
+| Broker outage acceptance/recovery, oversized failure isolation | `KafkaOutboxIT`, `KafkaOutboxScheduledIT` | Real single broker; publication is not consumer success |
+| Cached queue snapshots and staleness, real scheduler path | `OutboxMetricsTest`, `OutboxConfigurationTest`, `KafkaOutboxScheduledIT` | Sampled age; scheduler lag visible through snapshot age |
+| CI normal/failure gates and retained startup-agent guard | `CiStructureTest` | Parsed workflow structure and command assertions, not hosted execution |
+
+All image commands below exited 0 on frozen executable files:
+
+| Command / case | Exact current observation |
+|---|---|
+| `make verify-restart` | Project `commerce-restart-commerce-proof-ocjzte8v`; order `c0f8a7e3-3209-4d64-bbec-c2eaf49d974a`, event `25f8b396-7044-4908-842d-db83908c880e`; same pending ID, one immutable event, attempts 0, total 17.9999 and ordered lines after restart/keyed replay; relay disabled, no broker/inventory |
+| `make verify-inventory-image` | Project `commerce-inventory-commerce-proof-slwqmxg3`; reserve201/replay200, GET200/409/404, double release and released replay restore APPLE10/BANANA5; separate inventory API exercise |
+| `make verify-outbox-recovery`, A | Project `commerce-outbox-commerce-proof-ksqprz66`; HTTP202 order `a322a771-b048-40ad-8586-f98fcda14308`, event `8418a34a-9f2c-4228-b7d7-d3cb56c812ce`; actual SIGKILL exit137 before publish, recovery partition2 offset0, attempt1 delivered |
+| Same experiment, B | HTTP202 order `a38ef8a0-6e35-48a8-a810-11671f99a9b7`, event `66926eb7-07be-42b4-bd66-ecbf9a7acffe`; observed first record partition2 offset1 and selected ack marker while delivered null; SIGKILL exit137, normal restart without proof configuration, partition2 offset2 with identical raw payload/key/event ID, attempt2 delivered |
+
+A delivered at `2026-09-19T20:13:03.581544+00:00`. B's first lease expired at
+`2026-09-19T20:14:27.064615+00:00`; delivery recorded at
+`2026-09-19T20:14:28.212008+00:00`. Final counts: **2 HTTP-created orders,
+2 outbox rows, 2 delivered rows, 3 distinct Kafka publications, 2 pending orders**.
+Before/after both crash cases: stock APPLE10/BANANA5, inventory attempts,
+reservations and reservation lines all zero; old order recovery attempts stay zero.
+Neither case uses SQL fixture writes; A disables publication before killing,
+whereas B selects the exact post-acknowledgement hook boundary.
+
+Each `VERIFY_FAIL_AFTER_START=1 bash scripts/<script>.sh` returned **97**:
+restart project `commerce-restart-commerce-proof-asv32fbn`, inventory project
+`commerce-inventory-commerce-proof-vk0qhoyj`, outbox project
+`commerce-outbox-commerce-proof-g4porgag`. All six success/failure projects
+verified owned containers=0, networks=0, volumes=0. No global prune. Cleanup
+cannot be guaranteed if the harness itself is SIGKILLed, the host is lost, or the
+daemon prevents removal; bounded cleanup reports failures instead of inventing success.
+
+Exact local logs are retained under
+`/Users/bxl/.codex/worktrees/phase-4a-outbox/commerce-lab/.superpowers/sdd/2026-09-19-phase-4a-outbox/`:
+`task6-verify-final.log`, `task6-clean-{order,inventory}.log`,
+`task6-verify.log`, `task6-structural-{red,green}.log`, `task6-python.log`,
+`task6-{restart,inventory,outbox}-image.log`,
+`task6-{restart,inventory,outbox}-failure.log`,
+`task6-frozen.sha256`, `task6-frozen-check.log` and `task6-frozen-final.log`.
+These ignored local handoff artifacts are not hosted CI artifacts.
+The report `task-6-report.md` gives full commands, final reruns and changed paths.
+
+Minor diagnostics remain visible: expected negative-test WARN/ERROR messages
+(invalid configuration, guarded migration, injected constraints, broker outage)
+and the Kafka console consumer's idle TimeoutException when bounded observation
+ends. The consumer exits 0 and record assertions pass. No global logging
+suppression was added. The startup-agent warning guard remains active and the
+local suite contains no dynamic agent attachment warning.
+At-least-once replay is demonstrated, not exactly-once effects, consumer
+deduplication, inventory completion, indefinite retention or replicated disaster
+tolerance. See [ADR-0008](adr/0008-transactional-outbox-and-polling-relay.md).
 
 ### Phase 4B: workflow recovery
 

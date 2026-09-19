@@ -15,14 +15,14 @@ See [ADR-0004](docs/adr/0004-evidence-driven-learning-roadmap.md) for the revise
 
 | Service | Owns | Status |
 |---|---|---|
-| `order-service` | Order identity, confirmation/rejection, pending recovery | Phase 3B implemented; hosted CI pending |
-| `inventory-service` | Stock, reservations and durable attempt replay | Phase 3B implemented; hosted CI pending |
+| `order-service` | Order identity, atomic outbox, polling publication | Phase 4A locally verified; final review and hosted CI pending |
+| `inventory-service` | Stock, reservations and durable attempt replay | Phase 3B merged; Phase 4B consumer not started |
 | `frontend` | React SPA to place orders and watch them confirm | not started (Phase 6) |
 
 ## Tech stack
 
 - **Java 21**, **Spring Boot 3.3**, **Maven**
-- **Postgres + Flyway** (Phase 2), **Kafka via Redpanda** (Phase 4)
+- **Postgres + Flyway** (Phase 2), **Apache Kafka 3.7.1** (Phase 4A)
 - **OpenTelemetry → Tempo + Prometheus + Grafana** (Phase 5)
 - **React + Vite** (Phase 6)
 
@@ -35,6 +35,9 @@ See [ADR-0004](docs/adr/0004-evidence-driven-learning-roadmap.md) for the revise
 
 ## Quick start
 
+For an existing Phase 3B database, follow the [upgrade runbook](#upgrade-and-rollback-runbook)
+before starting 4A. Old writers must be stopped and pending orders resolved first.
+
 ```bash
 make test                   # both services' fast Surefire suites
 make test-order             # order-service fast suite only
@@ -44,12 +47,12 @@ make verify-order           # order-service full suite only
 make verify-inventory       # inventory-service full suite only
 make verify-restart         # isolated order image/restart proof
 make verify-inventory-image # isolated inventory image reserve/release proof
-make verify-sync-recovery   # real response loss, stock effects and restart recovery
-make up                     # build images and start both service/database pairs
+make verify-outbox-recovery # real process kills and identical-event duplicate proof
+make up                     # both service/database pairs, Kafka and topic provisioning
 make ps                     # show service health
 make logs                   # tail logs
 make down                   # stop the stack and retain database volumes
-docker compose down -v      # stop the stack and reset both local databases
+docker compose down -v      # stop the stack and reset both local databases AND broker data
 ```
 
 Each Maven project also builds independently:
@@ -81,14 +84,16 @@ Run `make` with no target for the full list.
 
 Applications share `service-network`; neither database joins it. Each database
 retains its private service network. Order depends only on its own database at
-startup, not inventory. Compose sets `INVENTORY_BASE_URL=http://inventory-service:8081`;
-local JVM runs default to `http://localhost:8081`.
+startup, not inventory or Kafka. Kafka is internal-only at `kafka:9092`, with a
+named `kafka-data` volume on `service-network`; neither database joins that network.
+Order no longer calls inventory. A host JVM needs an explicitly reachable Kafka
+bootstrap/listener setup; the Compose broker does not expose a host port.
 
 Image verification targets use unique Compose projects and loopback-only ephemeral
 ports, so they can coexist with the normal stack. The service-specific targets
 start only their own service/database pair. All three verify removal of their own
 containers, volumes and networks on success or failure, without pruning other stacks.
-`VERIFY_FAIL_AFTER_START=1 bash scripts/verify-sync-recovery.sh` deliberately exits
+`VERIFY_FAIL_AFTER_START=1 bash scripts/verify-outbox-recovery.sh` deliberately exits
 97 after startup to exercise cleanup (also supported by both service-specific scripts).
 
 ### Verify Phase 0
@@ -108,7 +113,7 @@ then run `mvn -f order-service/pom.xml spring-boot:run`):
 ```bash
 # New intent: generate a key once; retain it for retries of this exact payload.
 ORDER_KEY=$(uuidgen)
-# place -> 201 CONFIRMED/REJECTED, or 202 PENDING_INVENTORY; includes Location
+# place -> 202 PENDING_INVENTORY; includes Location (no completion consumer in 4A)
 curl -i -X POST http://localhost:8080/api/v1/orders \
   -H 'Content-Type: application/json' \
   -H "Idempotency-Key: ${ORDER_KEY}" \
@@ -142,9 +147,9 @@ curl http://localhost:8080/api/v1/orders/<id>   # still 200 — stored in Postgr
 The Testcontainers suite (`make verify`) proves database round trips, migration from
 V1 to V2, stable line order, supported price boundaries, assigned-ID insert behavior,
 detached lazy-loading behavior, and that OSIV remains disabled. Run
-`make verify-restart` for the separate image-and-process check: with inventory
-unavailable, it creates a pending order, restarts only `order-service`, and fetches
-the same pending ID, value and line sequence without starting inventory. The named
+`make verify-restart` for the separate image-and-process check: with the relay disabled, it creates a pending order and one immutable outbox row,
+restarts only `order-service`, and verifies the same ID, value, line sequence and
+event through GET and keyed replay, without starting inventory or Kafka. The named
 Postgres volume also retains data across `docker compose down` / `up` (without `-v`).
 Exact claims and limits are in the [scoreboard](docs/notes-verification.md).
 
@@ -156,7 +161,7 @@ database. Flyway seeds two demo rows: `SKU-APPLE` with 10 available units and
 complete public inventory API:
 
 ```bash
-docker compose down -v # optional fresh demo; removes both local database volumes
+docker compose down -v # optional fresh demo; removes both local database volumes AND broker data
 make up
 ORDER_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
 
@@ -196,53 +201,132 @@ claim about every isolation level, deadlock shape, or SQL anomaly. See
 [ADR-0006](docs/adr/0006-inventory-reservation-correctness.md) and the
 [scoreboard](docs/notes-verification.md).
 
-### Verify Phase 3B: uncertain outcomes and recovery
+### Reproduce the preserved Phase 3B baseline
 
-`make verify-sync-recovery` builds both real images and a test-only forwarding proxy.
-The proxy fully reads real inventory success responses, then drops both request-path
-responses (new `201`, matching replay `200`) before order receives them. The proof
-asserts pending state, a real RESERVED attempt and stock `10/5 -> 8/4`, restarts
-order while the fault remains active, restores traffic, and uses a 90-second polling
-budget (individual HTTP socket timeout 5 seconds) for the same ID to become CONFIRMED
-with stock still `8/4`.
+Phase 3B merged at `ca525d1a8b4e65fe747d60824fc3c2e517e11074`; its
+[hosted CI succeeded](https://github.com/bxljoy/commerce-lab/actions/runs/35453124768).
+The sync coordinator, recovery worker, proxy and sync-only scripts are retired from
+the active 4A path. Reproduce their commands in a separate baseline checkout, with
+isolated databases, never by running the old binary against a 4A database:
 
-A second scenario stops order, commits a controlled pending DB fixture with no
-inventory attempt, and starts order again. Recovery GET returns 404, POST reserves
-once, and the same ID confirms (`8/4 -> 7/4`). This models the durable state before
-the first remote attempt; it is **not** an injected crash in an HTTP handler.
-The first scenario restarts after remote commit and before local terminal recording,
-not at a precisely instrumented process-kill instruction.
+```bash
+git worktree add --detach ../commerce-lab-phase3b ca525d1a8b4e65fe747d60824fc3c2e517e11074
+cd ../commerce-lab-phase3b
+make verify
+make verify-restart
+make verify-inventory-image
+make verify-sync-recovery
+VERIFY_FAIL_AFTER_START=1 bash scripts/verify-sync-recovery.sh
+```
 
-`Idempotency-Key` is required, globally scoped and retained for the order lifetime.
-Matching pending replay returns `202` without another request-path HTTP attempt;
-terminal replay returns `200`. Replay preserves identity and business effect, not
-the original response bytes. Reusing a key with different valid content returns 409.
-Recovery defaults to enabled, fixed delay 5000 ms and batch size 20; override through
-`ORDER_RECOVERY_ENABLED`, `ORDER_RECOVERY_FIXED_DELAY_MS`, `ORDER_RECOVERY_BATCH_SIZE`.
-Tests alone disable scheduling in shared test resources. Historical PLACED rows are
-readable but excluded from recovery.
+The baseline README/ADR-0007 retain the response-loss, fixture and operational
+repair explanations. Its proof projects use isolated resources; do not use its
+normal stack with the 4A project name or volumes.
 
-Timeouts and transport failures mean uncertainty, never stock rejection. The request
-path permits two attempts; recovery permits one GET and at most one POST per pass.
-Apache classic `responseTimeout` bounds socket waiting, **not a total wall-clock
-deadline**. No slow-dribble response or DNS-bound proof is claimed.
+### Phase 4A: pending-only orders and durable publication
 
-Blocked `recoveryIssue` values represent operational inconsistencies (unexpected
-RELEASED, payload conflict, unknown 4xx, invalid/mismatched responses), not business
-rejection. Inspect order/reservation IDs and correlated logs; compare persisted
-intent, inventory attempt and stock before deciding a repair. Pause order recovery
-and quiesce order writes during an operator-reviewed repair, back up affected rows,
-and repair the diagnosed data or protocol cause. Only then clear the reviewed row's
-`recovery_blocked`/`last_failure_code`, set `next_attempt_at` due, and resume recovery.
-Never blindly confirm, reserve a new ID, delete the attempt ledger or automatically
-unblock all rows. There is no public repair endpoint or proof of arbitrary corruption
-repair. Cancellation orchestration remains out of scope.
+New valid orders return `202 PENDING_INVENTORY` with Location and Retry-After.
+Matching key/payload replay returns the same pending order and no new event;
+historical terminal replay returns 200 and emits no event. Changed valid payload
+under the same key returns 409; invalid input returns 400. Keys remain globally
+scoped and retained for the order lifetime. GET retains its 200/404 behavior.
 
-Deploy inventory replay support before order integration. Required headers, new
-states and replay/GET status changes are intentional API compatibility changes;
-mixed-version rolling upgrades are not claimed. API/library versions are unchanged
-by the runtime verification work. Hosted CI remains pending until the branch is
-published through a separately authorized action.
+Order, request identity and one immutable OrderPlaced event commit atomically.
+The relay publishes the stored payload to `commerce.orders.v1`, keyed by order
+UUID, with a stable event ID. Broker acknowledgement records publication only,
+not consumer success: orders remain pending and inventory stock is untouched.
+There is no inventory consumer or automatic confirmation/rejection in 4A.
+
+```bash
+make verify-outbox-recovery
+```
+
+Case A commits through HTTP with publication disabled and no broker, kills the
+application, then starts Kafka and a normal relay against the retained database.
+Case B observes a selected test-only post-acknowledgement marker and Kafka record,
+kills the actual application before delivery recording, then restarts without
+proof configuration. After lease expiry, the identical event/key/payload appears
+at a different Kafka offset. These are process-crash proofs, not SQL crash fixtures.
+Only the explicit `outbox-proof` profile plus enable flag and selected event UUID
+can arm the hook; never enable it in normal operation.
+
+### Upgrade and rollback runbook
+
+1. Stop all Phase 3B order writers and recovery workers, including extra replicas.
+   Mixed-version rolling operation is unsupported. Inspect every pending order,
+   including blocked ones. Resolve legitimate pending work with the baseline and
+   operator review before the final stop; do not fabricate terminal states or
+   delete orders to bypass the guard.
+2. Back up and inspect the databases with all old writers stopped. Require zero
+   `PENDING_INVENTORY` orders. Flyway V5 independently rejects any pending row and
+   preserves historical nonpending rows and request identities without backfill.
+   The guard cannot protect against an old writer restarted after migration.
+3. Deploy 4A only after that check. Start the broker and provision the topic below;
+   HTTP acceptance depends only on the order database and can queue during outage.
+   Verify publication, pending state and backlog diagnostics.
+4. There is no automatic downgrade after new 4A pending orders exist: the old
+   worker would act on them. Stop and investigate a failed upgrade; any restore
+   requires an operator-reviewed database/traffic recovery plan. Baseline
+   experiments must use isolated databases, never the live upgraded data.
+
+Run through `docker compose exec -T postgres psql -U order -d orderdb`:
+
+```sql
+SELECT status, count(*) FROM orders GROUP BY status;
+SELECT event_id, order_id, attempt_count, next_attempt_at, lease_until,
+       last_error_code, delivered_at
+FROM order_outbox WHERE delivered_at IS NULL ORDER BY created_at;
+```
+
+### Broker and backlog operations
+
+```bash
+docker compose up -d --wait kafka
+docker compose run --rm topic-init
+docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server kafka:9092 --describe --topic commerce.orders.v1
+docker compose exec -T kafka /opt/kafka/bin/kafka-configs.sh \
+  --bootstrap-server kafka:9092 --entity-type topics \
+  --entity-name commerce.orders.v1 --describe
+curl -fsS http://localhost:8080/actuator/metrics/outbox.pending
+curl -fsS http://localhost:8080/actuator/metrics/outbox.oldest.pending.age
+curl -fsS http://localhost:8080/actuator/metrics/outbox.failed.pending
+```
+
+Require 3 partitions, replication factor 1 and delete retention 604800000 ms
+(seven days). `--if-not-exists` provisioning does not repair a misconfigured existing
+topic: inspect its configuration. RF1 plus `acks=all` is not broker-HA proof;
+data loss and retention expiry are outside the application-crash guarantee.
+
+Defaults: poll 1000 ms, at most 20 claims/pass, lease 60000 ms, acknowledgement
+wait 12000 ms, producer max.block 2000 ms, delivery.timeout 10000 ms,
+request.timeout 3000 ms, linger 0, idempotence true, max.in.flight 1 and acks all.
+Persisted backoff starts at 1000 ms, doubles to a 60000 ms cap, then adds 0..250 ms jitter.
+Claims use database time and skip locked rows; token-conditional bookkeeping
+rejects stale workers but does not fence a late Kafka send. Retries can duplicate
+publication; no cross-order ordering or exactly-once consumer effect is claimed.
+
+Metrics are cached snapshots refreshed by the scheduler, not live SQL on scrape.
+Inspect `outbox.snapshot.stale` and `outbox.snapshot.age` as well as pending,
+oldest pending age (seconds), failed pending count, attempts and publication timer.
+A stale/unavailable snapshot is not a healthy empty queue; before the first
+successful refresh, values are NaN. Snapshot age can grow during a long relay pass
+even when the last refresh succeeded. When scheduling is
+disabled with `OUTBOX_ENABLED=false`, snapshots are not refreshed automatically.
+Use the SQL above as the authoritative inspection path.
+
+For persistent failures, correlate event/order/correlation IDs, attempt, outcome,
+latency and stable error code in relay logs. `ACK_UNCERTAIN` means retry can
+duplicate; `RECORD_TOO_LARGE` and repeated `SEND_FAILED` need diagnosis of broker,
+topic, producer limits, authorization/configuration and stored event validity.
+Repair the diagnosed cause with operator review; no lifetime attempt cap silently
+drops work. Do not arbitrarily edit payloads, delete pending rows, mark delivery,
+or change identity/destination to make the backlog disappear. Delivered rows are
+retained; purging and arbitrary corruption repair are outside 4A.
+
+See [ADR-0008](docs/adr/0008-transactional-outbox-and-polling-relay.md) and the
+[scoreboard](docs/notes-verification.md) for evidence and limits. Final whole-branch
+review and Phase 4A hosted CI remain pending; local tests are not merge authorization.
 
 ### Generated API code
 
@@ -288,8 +372,8 @@ Write an ADR for meaningful decisions; smaller experiments need only a short not
 
 | Next milestone | What it proves |
 |---|---|
-| Phase 3B closeout | Local evidence and whole-branch review complete; hosted CI remains pending |
-| Phase 4A | Committed events survive publisher failure through an outbox |
+| Phase 3B closeout | Merged at ca525d1; hosted CI succeeded |
+| Phase 4A | Outbox implementation; final review and hosted CI pending |
 | Phase 4B | Both services recover from duplicates, rejection, cancellation, and delayed events |
 | Phase 5 | Logs, metrics, and traces explain successful and failed orders |
 | Phase 6 | A small UI and E2E test demonstrate the completed flow |
