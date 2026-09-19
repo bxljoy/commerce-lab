@@ -99,6 +99,39 @@ class OrderOutboxCreationIT extends AbstractPostgresIntegrationTest {
         assertThat(INVENTORY_CALLS.get()).isZero();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.MethodSource("missingOrInvalidCorrelations")
+    void generatedCorrelationIsEchoedAndPersistedInRequestAndEvent(String incoming) throws Exception {
+        var request = post("/api/v1/orders").header("Idempotency-Key", "generated")
+                .contentType("application/json").content("""
+                {"customerId":"cust","currency":"EUR",
+                 "lines":[{"sku":"A","quantity":2,"unitPrice":1}]}
+                """);
+        if (incoming != null) request.header("X-Correlation-ID", incoming);
+        var response = mvc.perform(request)
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("PENDING_INVENTORY"))
+                .andReturn().getResponse();
+
+        String echoed = response.getHeader("X-Correlation-ID");
+        assertThat(echoed).matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+                .isNotEqualTo(incoming);
+        UUID orderId = UUID.fromString(mapper.readTree(response.getContentAsString()).path("id").textValue());
+        assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+        assertCounts(1);
+        assertThat(jdbc.queryForObject("SELECT correlation_id FROM order_requests WHERE order_id = ?",
+                String.class, orderId)).isEqualTo(echoed);
+        var event = mapper.readTree(jdbc.queryForObject("SELECT payload FROM order_outbox WHERE order_id = ?",
+                String.class, orderId));
+        assertThat(event.path("correlationId")).isEqualTo(mapper.getNodeFactory().textNode(echoed));
+        assertThat(org.slf4j.MDC.get("correlationId")).isNull();
+        assertThat(INVENTORY_CALLS.get()).isZero();
+    }
+
+    static java.util.stream.Stream<String> missingOrInvalidCorrelations() {
+        return java.util.stream.Stream.of(null, "", "invalid id", "x".repeat(129), "bad\nheader");
+    }
+
     @Test void noSynchronousInventoryOrRecoveryBeansExist() {
         for (String name : context.getBeanDefinitionNames()) {
             Class<?> type = context.getType(name);
