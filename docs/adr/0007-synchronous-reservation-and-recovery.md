@@ -1,13 +1,14 @@
 # ADR-0007: Synchronous Reservation and Recovery
 
 Date: 2026-09-19
-Status: Accepted on 2026-09-19; implementation and verification in progress.
+Status: Accepted on 2026-09-19 after design review and locally verified implementation.
+Hosted CI and controller whole-branch closeout remain pending; not a merge authorization.
 
 ## Context
 
 Phase 3A proves bounded stock concurrency and atomic reserve/release behavior inside
 inventory's database. Its duplicate-ID conflict does not resolve a lost HTTP response.
-Order creation currently persists PLACED without contacting inventory. Phase 3B
+Before Phase 3B, order creation persisted PLACED without contacting inventory. Phase 3B
 must bridge the two transactions without pretending an HTTP timeout is rejection.
 
 ## Decision
@@ -62,3 +63,34 @@ are deliberate API changes. Migration preserves historical data; current scripts
 and contract tests must be updated. No distributed atomicity or universal recovery
 claim is made. The decisive evidence is a committed reservation with a lost response
 that recovers after restart without decrementing inventory again.
+
+## Verification and limits
+
+On 2026-09-19, `make verify` passed 228 tests (order 144, inventory 84), with zero
+failures, errors or skips. `make verify-restart` and `make verify-inventory-image`
+exercise each independently runnable image. `make verify-sync-recovery` forwards to
+real inventory, reads its successful 201 and replay 200, drops both responses, and
+verifies pending order + RESERVED attempt + stock `10/5 -> 8/4`. Order remains pending
+through its process restart; restoring traffic confirms the same ID with stock
+still `8/4`. The fault proxy/configuration exists only under `scripts/fixtures`.
+
+This is remote commit followed by response loss before local terminal recording,
+then a service restart, not an instruction-level kill inside the handler. A second
+proof uses a clearly labeled committed-pending DB fixture while order is stopped:
+no prior remote attempt (GET 404), then startup recovery GET 404 + POST 201, same ID
+CONFIRMED and one stock decrement. It demonstrates recovery from that durable state,
+not an HTTP crash at the local-commit boundary. The scheduler uses production defaults
+(enabled, fixed delay 5000 ms, batch size 20) in the image proofs.
+
+Apache classic `responseTimeout` bounds socket waiting, not a total wall-clock
+deadline. Tests do not prove a slow-dribble or DNS bound. Blocked operational
+inconsistencies require diagnosis and operator-reviewed repair as documented in
+the README; no automatic corruption repair or public unblocking endpoint is claimed.
+
+Compose joins only applications to `service-network`, preserves private database
+networks, and does not make order startup depend on inventory. Proofs use isolated
+projects/ephemeral ports and verify owned-resource cleanup, including deliberate
+failure paths. Deploy inventory replay support before order integration; no
+mixed-version rolling-upgrade guarantee is made. Exact environment and evidence
+are in the [scoreboard](../notes-verification.md). Hosted CI is configured but not
+yet run on this unpushed branch.

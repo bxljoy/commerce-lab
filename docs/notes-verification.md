@@ -22,14 +22,18 @@ See [ADR-0004](adr/0004-evidence-driven-learning-roadmap.md) for the revised sco
 | 1 | One service done right (OpenAPI-first, layered, validation, RFC-7807, unit/slice tests) | ✅ |
 | 2 | Reliable Postgres persistence and bounded cleanup | ✅ |
 | 3A | Inventory correctness under tested PostgreSQL contention shapes | ✅ |
-| 3B | Sync integration, idempotency, uncertain-outcome recovery | ⬜ |
+| 3B | Sync integration, idempotency, uncertain-outcome recovery | 🟡 Local implementation/evidence; hosted CI and controller closeout pending |
 | 4A | Durable event delivery through an outbox | ⬜ |
 | 4B | Workflow recovery, compensation, idempotent consumers, DLQ | ⬜ |
 | 5 | Observability — logs/metrics/traces across the system | ⬜ |
 | 6 | Frontend slice + E2E; core finish line | ⬜ |
 | 7 | Optional capstone (gateway/auth, rate limiter, CQRS, vthreads, deploy) | ⬜ |
 
-## Current evidence
+## Phase 3A historical evidence
+
+This section records the 2026-09-18 baseline, not current test counts or replay
+semantics. Phase 3B below supersedes the duplicate-ID conflict and rejection
+rollback claims; historical ADRs remain unchanged.
 
 2026-09-18, the Phase 3A closeout candidate: `make verify` passed on local macOS
 26.6.2 (Apple Silicon), Java 21.0.5, Maven 3.9.14, OrbStack, and
@@ -137,24 +141,62 @@ retries, and uncertain-outcome recovery remain Phase 3B work.
 
 ### Phase 3B: synchronous integration
 
-Design preparation (2026-09-19): [draft design](superpowers/specs/2026-09-19-phase-3b-sync-integration-design.md),
-[proposed ADR-0007](adr/0007-synchronous-reservation-and-recovery.md), and
-[implementation plan](superpowers/plans/2026-09-19-phase-3b-sync-integration.md).
-The core choices were approved in conversation; the detailed documents are ready
-for review. Implementation and the evidence below remain outstanding.
+Binding [design](superpowers/specs/2026-09-19-phase-3b-sync-integration-design.md)
+and [ADR-0007](adr/0007-synchronous-reservation-and-recovery.md).
 
-- [ ] Record state transitions, public response semantics, and restart recovery in an ADR.
-- [ ] Keep RestClient calls and retries outside DB transactions; prove the boundary.
-- [ ] Enforce idempotency at order creation and inventory reservation: same key/payload
-  repeats the outcome; conflicting payload reuse is rejected.
-- [ ] Lose a successful reservation response, retry/query by stable identity, and
-  recover without reserving twice. Timeout is uncertainty, not insufficient stock.
-- [ ] Restart between local persistence and remote outcome recording; resolve unfinished work.
-- [ ] Test timeouts, bounded retries, circuit opening and recovery; never report
-  success for an unconfirmed reservation. Business rejection is not a transient failure.
-- [ ] Contract tests detect an intentional breaking producer change.
-- [ ] Log order/reservation/correlation IDs and propagate correlation across HTTP.
-- [ ] Extend commands and CI to both services while keeping each independently buildable.
+Fresh local `make verify` on 2026-09-19: **228 passed, 0 failures/errors/skips**.
+Order: 79 Surefire + 65 Failsafe = 144. Inventory: 48 Surefire + 36 Failsafe = 84.
+Environment: macOS 26.6.2 / Apple Silicon, Amazon Corretto 21.0.5, Maven 3.9.14,
+OrbStack Docker Engine 29.4.0 (linux/arm64), Docker client 29.2.1, Compose 5.1.2,
+`postgres:16-alpine`. Built application images use the existing Temurin 21 Dockerfiles
+(runtime observed as Java 21.0.12);
+the fault proxy is test-only `python:3.13-alpine`. No API/library versions changed
+in Task 8. Shared test resources disable scheduling only in tests; image runs use
+enabled recovery with fixed delay 5000 ms and batch size 20.
+
+| Exit criterion / claim | Evidence in the fresh suite | Limit |
+|---|---|---|
+| Matching/concurrent order keys select one identity; changed content conflicts; invalid input consumes no identity | `OrderIdempotencyIT` | Tested races, globally scoped lifetime keys; not exactly-once network delivery |
+| Equivalent/reordered inventory payloads have one stock effect; changed payload conflicts; release stays terminal | `InventoryReplayIT`, `InventoryReservationIT` | PostgreSQL READ COMMITTED, bounded race fixtures |
+| Rejection replays after availability changes, including unknown SKUs; unexpected DB failure rolls everything back | `InventoryReplayIT.rejectionCommitsSnapshotIncludingUnknownSkuAndReplaysAfterReplenishment`, `failureCompletingLedgerRollsBackClaimReservationAndStockThenAllowsFreshRetry` | Business rejection **commits attempt metadata** while stock/reservations stay unchanged; only unexpected failure rolls back the ledger too |
+| HTTP and retry sleep stay outside local DB transactions; an independent DB writer progresses during blocked HTTP | `OrderReservationIT.blockedHttpDoesNotHoldOrderRowOrCallerTransaction`, gateway-entry transaction guards in `OrderReservationIT` / `OrderRecoveryIT` | Selected request/recovery paths, not distributed atomicity |
+| Two request attempts maximum; no business retry; circuit open/half-open; transport timeout and bounded pool acquisition | `InventoryGatewayTest`, `OrderReservationIT`, `OrderRecoveryIT`, `OrderRecoveryScheduleTest` | Apache classic `responseTimeout` is socket wait, **not total wall-clock deadline**; no slow-dribble or DNS-bound proof claimed |
+| Due ordering, batch size, persisted backoff, context restart and optimistic races cannot regress terminal state | `OrderRecoveryIT`, `OrderProgressIT` | Context tests use controlled gateway outcomes; real images covered separately below |
+| Producer contracts match consumer-owned fixtures and reject required-field/type mutations | `InventoryConsumerContractIT`, `OrderPublicContractIT`, both `InventoryContractTest` classes | Selected contracts, not complete OpenAPI conformance or regenerated-mock evidence |
+| Legacy PLACED excluded; migration backfill agrees with Java canonical content and preserves reservation line order/states | `FlywayMigrationIT`, `InventoryMigrationIT`, `OrderRecoveryIT` | Phase 3A fixtures, not mixed-version rolling deployment |
+| Correlation echo/propagation/persistence and MDC cleanup | Both `CorrelationIdFilterTest` classes, `InventoryGatewayTest`, `OrderReservationIT` | Structured local logs; no distributed trace backend claim |
+
+Matching order replay returns the **current** representation: initial 202 may later
+replay as 200 CONFIRMED. Identity and business effect are stable, not response bytes.
+Pending replay does no request-path HTTP; the scheduled worker owns progress.
+Business rejection is final; RELEASED during pending recovery, payload conflict,
+unexpected 4xx and malformed/mismatched responses block automatic recovery with a
+stable `recoveryIssue`. See the README's operator-reviewed diagnosis/repair procedure;
+automatic repair of corruption or manual cross-service interference is not claimed.
+
+Runtime evidence on the same host (all commands exit 0):
+
+| Command | Actual observation | Boundary / limit |
+|---|---|---|
+| `make verify-restart` | Only order + its DB; pending ID `23c791bc-ad48-48a7-8f8b-cefd38d2b259` survives restart; EUR 17.9999 and line sequence unchanged | Inventory deliberately unavailable at loopback port 1; not host/DB restart |
+| `make verify-inventory-image` | New reserve 201, matching replay 200, GET reserved 200/rejected 409/missing 404; two releases and released replay restore exact stock 10/5 | Independent inventory image with real PostgreSQL |
+| `make verify-sync-recovery` response loss | Exactly **2** real successful responses discarded, upstream **201 then 200**; order `532815c4-22d1-4ec3-b3de-8bdc779937ee` pending before/after restart, then same ID CONFIRMED; APPLE/BANANA **10/5 -> 8/4 -> 8/4** | Proxy reads producer success completely before closing downstream socket; recovery GETs return proxy 503 until restored. Restart occurs after remote commit/before local terminal recording, not an instruction-level process-kill hook |
+| `make verify-sync-recovery` pre-attempt state | Controlled pending ID `d7e2af3e-d042-444a-9aff-b6d9303402e5`, attempt_count 0, inventory GET 404; startup recovery GET404 + POST201, same ID CONFIRMED; stock **8/4 -> 7/4** | **DB fixture inserted while order is stopped**, not an HTTP crash injection before the first attempt |
+| `make verify-sync-recovery` deployment/normal path | Live app-to-app DNS/HTTP works; DBs absent from shared network; new orders return 201 CONFIRMED/REJECTED and replay 200 | Separate terminal smoke after fault checkpoints; confirmation changes stock to 7/3, rejection/replays leave it unchanged |
+
+The scripts report unique project names and verify zero owned containers (including
+stopped), networks and volumes after teardown. Deliberate `VERIFY_FAIL_AFTER_START=1`
+runs for all three scripts must return 97; a cleanup error instead returns failure.
+Initial harness failures also exercised cleanup: chunked client bodies required
+explicit proxy decoding, and ephemeral host ports required re-discovery after restart.
+Both were fixed and the image proofs rerun. Two additional stdlib proxy framing
+tests pass, separate from the 228 Maven tests. Cleanup cannot be guaranteed after
+SIGKILL, host loss or an unavailable Docker daemon; no global prune is used.
+
+Hosted CI has the new runtime and deliberate failure-cleanup steps but **remains
+pending on this unpushed branch**. Local execution does not substitute for a hosted
+run. The controller owns vault updates, final plan checkboxes and whole-branch
+review; Task 8 does not claim those are complete.
 
 ### Phase 4A: durable event delivery
 
