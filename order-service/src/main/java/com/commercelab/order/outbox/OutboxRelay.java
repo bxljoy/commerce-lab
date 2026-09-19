@@ -1,7 +1,6 @@
 package com.commercelab.order.outbox;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -18,18 +17,18 @@ public class OutboxRelay {
     private final OutboxPublisher publisher;
     private final OutboxPublicationHook hook;
     private final OutboxProperties properties;
-    private final MeterRegistry meters;
+    private final OutboxMetrics metrics;
     private final ObjectMapper mapper;
     private final AtomicBoolean running = new AtomicBoolean();
 
     public OutboxRelay(OutboxDeliveryStore store, OutboxRetryPolicy retryPolicy, OutboxPublisher publisher,
-            OutboxPublicationHook hook, OutboxProperties properties, MeterRegistry meters, ObjectMapper mapper) {
+            OutboxPublicationHook hook, OutboxProperties properties, OutboxMetrics metrics, ObjectMapper mapper) {
         this.store = store;
         this.retryPolicy = retryPolicy;
         this.publisher = publisher;
         this.hook = hook;
         this.properties = properties;
-        this.meters = meters;
+        this.metrics = metrics;
         this.mapper = mapper;
     }
 
@@ -49,7 +48,7 @@ public class OutboxRelay {
                     if (next.isEmpty()) break;
                     claim = next.get();
                 } catch (RuntimeException ex) {
-                    meters.counter("outbox.bookkeeping.failures", "operation", "claim").increment();
+                    metrics.claimFailed();
                     log.warn("Outbox outcome=bookkeeping_failed code=CLAIM_FAILED");
                     break;
                 }
@@ -128,8 +127,7 @@ public class OutboxRelay {
 
     private void report(OutboxClaim claim, long started, String outcome, String code) {
         long elapsed = System.nanoTime() - started;
-        meters.counter("outbox.attempts", "outcome", outcome).increment();
-        meters.timer("outbox.publication", "outcome", outcome).record(elapsed, TimeUnit.NANOSECONDS);
+        metrics.recordAttempt(outcome, elapsed);
         log.info("Outbox eventId={} orderId={} correlationId={} attempt={} outcome={} latencyMs={} code={}",
                 claim.message().eventId(), claim.message().orderId(), MDC.get("correlationId"),
                 claim.attemptCount(), outcome, TimeUnit.NANOSECONDS.toMillis(elapsed), code);

@@ -31,6 +31,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -80,6 +81,7 @@ class KafkaOutboxIT extends AbstractPostgresIntegrationTest {
     @Autowired OutboxRelay relay;
     @Autowired OutboxDeliveryStore store;
     @Autowired MeterRegistry meters;
+    @Autowired OutboxMetrics metrics;
     @SpyBean KafkaTemplate<String, String> template;
 
     @BeforeEach void clear() {
@@ -90,7 +92,10 @@ class KafkaOutboxIT extends AbstractPostgresIntegrationTest {
             return invocation.callRealMethod();
         }).when(template).send(anyString(), anyString(), anyString());
     }
-    @AfterAll static void stop() { KAFKA.stop(); }
+    @AfterAll static void stop(@Autowired ProducerFactory<String, String> factory) {
+        try { factory.reset(); }
+        finally { KAFKA.stop(); }
+    }
 
     @Test void acknowledgedRecordMatchesStoredValueAndKeyAndOrderStaysPending() throws Exception {
         UUID order = createOrder(false);
@@ -152,6 +157,7 @@ class KafkaOutboxIT extends AbstractPostgresIntegrationTest {
         assertThat(row(healthy).get("delivered_at")).isNotNull();
         assertRecord(healthyRow);
         assertThat(store.stats().pendingCount()).isEqualTo(1);
+        metrics.refresh();
         assertThat(meters.get("outbox.failed.pending").gauge().value()).isEqualTo(1);
         assertThat(meters.get("outbox.pending").gauge().value()).isEqualTo(1);
         assertThat(meters.get("outbox.oldest.pending.age").gauge().value()).isGreaterThan(0);

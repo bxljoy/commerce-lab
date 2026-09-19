@@ -1,7 +1,6 @@
 package com.commercelab.order.outbox;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringSerializer;
@@ -53,28 +52,39 @@ public class OutboxConfiguration {
     OutboxPublicationHook outboxPublicationHook() { return message -> {}; }
 
     @Bean
+    OutboxMetrics outboxMetrics(OutboxDeliveryStore store, MeterRegistry meters) {
+        return new OutboxMetrics(store, meters);
+    }
+
+    @Bean
     OutboxRelay outboxRelay(OutboxDeliveryStore store, OutboxRetryPolicy retryPolicy, OutboxPublisher publisher,
-            OutboxPublicationHook hook, OutboxProperties properties, MeterRegistry meters, ObjectMapper mapper) {
-        Gauge.builder("outbox.pending", store, s -> s.stats().pendingCount()).register(meters);
-        Gauge.builder("outbox.failed.pending", store, s -> s.stats().failedPendingCount()).register(meters);
-        Gauge.builder("outbox.oldest.pending.age", store, s -> s.stats().oldestPendingAgeSeconds())
-                .baseUnit("seconds").register(meters);
-        return new OutboxRelay(store, retryPolicy, publisher, hook, properties, meters, mapper);
+            OutboxPublicationHook hook, OutboxProperties properties, OutboxMetrics metrics, ObjectMapper mapper) {
+        return new OutboxRelay(store, retryPolicy, publisher, hook, properties, metrics, mapper);
     }
 
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnProperty(name = "order.outbox.enabled", havingValue = "true", matchIfMissing = true)
     @EnableScheduling
     static class PollingConfiguration {
-        @Bean OutboxPollingTask outboxPollingTask(OutboxRelay relay) { return new OutboxPollingTask(relay); }
+        @Bean OutboxPollingTask outboxPollingTask(OutboxRelay relay, OutboxMetrics metrics) {
+            return new OutboxPollingTask(relay, metrics);
+        }
     }
 
     static class OutboxPollingTask {
         private final OutboxRelay relay;
-        OutboxPollingTask(OutboxRelay relay) { this.relay = relay; }
+        private final OutboxMetrics metrics;
+        OutboxPollingTask(OutboxRelay relay, OutboxMetrics metrics) {
+            this.relay = relay;
+            this.metrics = metrics;
+        }
 
         @Scheduled(fixedDelayString = "${order.outbox.poll-interval-ms:1000}",
                 initialDelayString = "${order.outbox.poll-interval-ms:1000}")
         public void poll() { relay.runOnce(); }
+
+        @Scheduled(fixedDelayString = "${order.outbox.poll-interval-ms:1000}",
+                initialDelayString = "${order.outbox.poll-interval-ms:1000}")
+        public void refreshMetrics() { metrics.refresh(); }
     }
 }

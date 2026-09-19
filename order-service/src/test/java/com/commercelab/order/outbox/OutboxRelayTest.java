@@ -41,7 +41,7 @@ class OutboxRelayTest {
     OutboxRelay relay(OutboxPublisher publisher, OutboxPublicationHook hook, int budget) {
         return new OutboxRelay(store, new OutboxRetryPolicy(() -> 0), publisher, hook,
                 new OutboxProperties(1000, budget, 60000, 12000, 2000, 10000, 3000),
-                meters, new ObjectMapper());
+                new OutboxMetrics(store, meters), new ObjectMapper());
     }
 
     void oneClaim() {

@@ -2,10 +2,14 @@ package com.commercelab.order.outbox;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
+import static org.awaitility.Awaitility.await;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Duration;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -43,10 +47,42 @@ class OutboxConfigurationTest {
         });
     }
 
-    @Test void enabledSchedulerRegistersOneTask() {
+    @Test void enabledSchedulerRegistersRelayAndSnapshotTasks() {
         runner.withPropertyValues("order.outbox.enabled=true", "order.outbox.poll-interval-ms=60000").run(context -> {
             assertThat(context).hasNotFailed();
-            assertThat(context.getBean(ScheduledAnnotationBeanPostProcessor.class).getScheduledTasks()).hasSize(1);
+            assertThat(context.getBean(ScheduledAnnotationBeanPostProcessor.class).getScheduledTasks()).hasSize(2);
+        });
+    }
+
+    @Test void repeatedScrapesNeverQueryTheDatabase() {
+        when(store.stats()).thenReturn(new OutboxStats(2, 17.5, 1));
+        runner.withPropertyValues("order.outbox.enabled=false").run(context -> {
+            var meters = context.getBean(MeterRegistry.class);
+            for (int i = 0; i < 10; i++) {
+                meters.get("outbox.pending").gauge().value();
+                meters.get("outbox.failed.pending").gauge().value();
+                meters.get("outbox.oldest.pending.age").gauge().value();
+            }
+            verifyNoInteractions(store);
+        });
+    }
+
+    @Test void realSchedulerRefreshesCachedSnapshotWithoutScrapes() {
+        var stats = new AtomicReference<>(new OutboxStats(2, 17.5, 1));
+        when(store.stats()).thenAnswer(invocation -> stats.get());
+        when(store.claimNext(any())).thenReturn(Optional.empty());
+        runner.withPropertyValues("order.outbox.enabled=true", "order.outbox.poll-interval-ms=50").run(context -> {
+            // No gauge is read until the scheduled task has queried the store itself.
+            await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> verify(store, atLeastOnce()).stats());
+            var meters = context.getBean(MeterRegistry.class);
+            await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> {
+                assertThat(meters.get("outbox.pending").gauge().value()).isEqualTo(2);
+                assertThat(meters.get("outbox.failed.pending").gauge().value()).isEqualTo(1);
+                assertThat(meters.get("outbox.oldest.pending.age").gauge().value()).isEqualTo(17.5);
+            });
+            stats.set(new OutboxStats(0, 0, 0));
+            await().atMost(Duration.ofSeconds(3)).untilAsserted(() ->
+                    assertThat(meters.get("outbox.pending").gauge().value()).isZero());
         });
     }
 
@@ -62,6 +98,7 @@ class OutboxConfigurationTest {
                     .containsEntry(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 3000)
                     .containsEntry(ProducerConfig.LINGER_MS_CONFIG, 0);
             var meters = context.getBean(MeterRegistry.class);
+            context.getBean(OutboxMetrics.class).refresh();
             assertThat(meters.get("outbox.pending").gauge().value()).isEqualTo(2);
             assertThat(meters.get("outbox.oldest.pending.age").gauge().value()).isEqualTo(17.5);
             assertThat(meters.get("outbox.failed.pending").gauge().value()).isEqualTo(1);
