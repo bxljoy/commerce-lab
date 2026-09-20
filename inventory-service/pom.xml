@@ -85,6 +85,7 @@
                 <targetPath>contracts</targetPath>
                 <includes>
                     <include>inventory/v1/*.json</include>
+                    <include>events/**/*.json</include>
                 </includes>
             </testResource>
         </testResources>
