@@ -51,7 +51,11 @@ public class JpaReservationRepository implements ReservationRepository {
     @Override
     @Transactional
     public Optional<Reservation> lockByOrderId(UUID orderId) {
-        return jpa.lockByOrderId(orderId).map(ReservationEntity::toDomain);
+        return jpa.lockByOrderId(orderId).map(entity -> {
+            // Refresh under the acquired row lock: a prior managed read may predate a concurrent release.
+            entityManager.refresh(entity);
+            return entity.toDomain();
+        });
     }
 
     @Override

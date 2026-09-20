@@ -49,7 +49,7 @@ public class InventoryService {
             if (!attempt.payload().equals(payload)) {
                 throw new ReservationPayloadConflictException(command.orderId());
             }
-            return replay(command.orderId(), attempt);
+            return replay(command.orderId(), attempt, true);
         }
 
         List<String> skus = candidate.lines().stream()
@@ -76,14 +76,17 @@ public class InventoryService {
     @Transactional(readOnly = true)
     public ReservationAttemptResult getAttempt(UUID orderId) {
         return replay(orderId, attempts.find(orderId)
-                .orElseThrow(() -> new ReservationNotFoundException(orderId)));
+                .orElseThrow(() -> new ReservationNotFoundException(orderId)), false);
     }
 
-    private ReservationAttemptResult replay(UUID orderId, ReservationAttemptStore.Attempt attempt) {
+    private ReservationAttemptResult replay(UUID orderId, ReservationAttemptStore.Attempt attempt, boolean lock) {
         if ("REJECTED".equals(attempt.outcome())) {
             return new ReservationAttemptResult.Rejected(attempt.unavailable());
         }
-        return new ReservationAttemptResult.Accepted(getReservation(orderId), false);
+        Reservation reservation = lock
+                ? reservations.lockByOrderId(orderId).orElseThrow(() -> new ReservationNotFoundException(orderId))
+                : getReservation(orderId);
+        return new ReservationAttemptResult.Accepted(reservation, false);
     }
 
     @Transactional

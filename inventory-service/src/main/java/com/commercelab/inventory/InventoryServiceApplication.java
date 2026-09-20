@@ -1,5 +1,6 @@
 package com.commercelab.inventory;
 
+import com.commercelab.inventory.events.EventJson;
 import java.time.Clock;
 
 import org.springframework.boot.SpringApplication;
@@ -16,5 +17,10 @@ public class InventoryServiceApplication {
     @Bean
     Clock clock() {
         return Clock.systemUTC();
+    }
+
+    @Bean
+    EventJson eventJson() {
+        return new EventJson();
     }
 }
