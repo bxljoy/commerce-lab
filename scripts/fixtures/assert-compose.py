@@ -9,7 +9,12 @@ for name in ("order-service", "inventory-service"):
 for name in ("postgres", "inventory-postgres"):
     assert "service-network" not in services[name]["networks"], name
 assert set(services["order-service"]["depends_on"]) == {"postgres"}
+assert set(services["inventory-service"]["depends_on"]) == {"inventory-postgres"}
+inventory_env = services["inventory-service"]["environment"]
+assert inventory_env["KAFKA_BOOTSTRAP_SERVERS"] == "kafka:9092"
+assert "INVENTORY_EVENTS_ENABLED" in inventory_env and "INVENTORY_OUTBOX_ENABLED" in inventory_env
 env = services["order-service"]["environment"]
+assert "ORDER_EVENTS_ENABLED" in env
 assert env["KAFKA_BOOTSTRAP_SERVERS"] == "kafka:9092"
 assert not any(key.startswith(("INVENTORY_", "ORDER_RECOVERY_")) for key in env)
 kafka = services["kafka"]
@@ -41,9 +46,12 @@ assert set(init["networks"]) == {"service-network"} and not init.get("ports")
 assert init["depends_on"]["kafka"]["condition"] == "service_healthy"
 command = " ".join(init["command"])
 for part in ("--bootstrap-server kafka:9092", "--partitions 3", "--replication-factor 1",
-             "--config retention.ms=604800000", "--config cleanup.policy=delete", "commerce.orders.v1"):
+             "--config retention.ms=604800000", "--config cleanup.policy=delete", "commerce.orders.v1",
+             "commerce.inventory.v1"):
     assert part in command, part
 if "--proof" in sys.argv:
+    assert str(env["ORDER_EVENTS_ENABLED"]).lower() == "false"
+    assert str(inventory_env["INVENTORY_EVENTS_ENABLED"]).lower() == "false"
     assert services["order-service"]["restart"] == "no"
     assert env["SPRING_PROFILES_ACTIVE"] in ("default", "outbox-proof")
     assert "ORDER_OUTBOX_PROOF_ENABLED" in env and "ORDER_OUTBOX_PROOF_EVENT_ID" in env

@@ -33,6 +33,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: order
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       OUTBOX_ENABLED: ${OUTBOX_ENABLED:-true}
+      ORDER_EVENTS_ENABLED: ${ORDER_EVENTS_ENABLED:-true}
     depends_on:
       postgres:
         condition: service_healthy
@@ -76,6 +77,9 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://inventory-postgres:5432/inventory
       SPRING_DATASOURCE_USERNAME: inventory
       SPRING_DATASOURCE_PASSWORD: inventory
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      INVENTORY_EVENTS_ENABLED: ${INVENTORY_EVENTS_ENABLED:-true}
+      INVENTORY_OUTBOX_ENABLED: ${INVENTORY_OUTBOX_ENABLED:-true}
     depends_on:
       inventory-postgres:
         condition: service_healthy
@@ -128,6 +132,10 @@ services:
       - >-
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092
         --create --if-not-exists --topic commerce.orders.v1
+        --partitions 3 --replication-factor 1
+        --config retention.ms=604800000 --config cleanup.policy=delete;
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092
+        --create --if-not-exists --topic commerce.inventory.v1
         --partitions 3 --replication-factor 1
         --config retention.ms=604800000 --config cleanup.policy=delete
     depends_on:

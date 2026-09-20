@@ -1,0 +1,13 @@
+services:
+  inventory-service:
+    restart: "no"
+    environment:
+      SPRING_PROFILES_ACTIVE: ${INVENTORY_PROOF_PROFILE:-default}
+      CONSUMER_PROOF_ENABLED: ${INVENTORY_PROOF_ENABLED:-false}
+      CONSUMER_PROOF_EVENT_ID: ${INVENTORY_PROOF_EVENT_ID:-}
+  order-service:
+    restart: "no"
+    environment:
+      SPRING_PROFILES_ACTIVE: ${ORDER_PROOF_PROFILE:-default}
+      CONSUMER_PROOF_ENABLED: ${ORDER_PROOF_ENABLED:-false}
+      CONSUMER_PROOF_EVENT_ID: ${ORDER_PROOF_EVENT_ID:-}

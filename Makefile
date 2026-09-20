@@ -35,6 +35,10 @@ verify-inventory-image: ## Build and smoke-test the inventory-service image
 verify-outbox-recovery: ## Prove committed outbox recovery and duplicate publication after process kill
 	bash scripts/verify-outbox-recovery.sh
 
+.PHONY: verify-async-completion
+verify-async-completion: ## Prove async completion and real consumer SIGKILL recovery
+	bash scripts/verify-async-completion.sh
+
 up: ## Build images and start the stack (detached)
 	docker compose up --build -d
 
