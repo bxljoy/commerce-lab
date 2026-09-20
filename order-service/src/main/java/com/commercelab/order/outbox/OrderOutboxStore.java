@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityManager;
+import java.util.Optional;
+import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -20,6 +22,12 @@ public class OrderOutboxStore {
         this.entityManager = entityManager;
         this.mapper = mapper;
         this.jdbc = jdbc;
+    }
+
+    /** JDBC-only read for completion commands; does not load or flush JPA entities. */
+    public Optional<String> findOrderPlacedPayload(UUID orderId) {
+        return jdbc.query("SELECT payload FROM order_outbox WHERE order_id = ? AND event_type = 'OrderPlaced'",
+                rs -> rs.next() ? Optional.of(rs.getString(1)) : Optional.empty(), orderId);
     }
 
     public void insert(OutboxMessage message) {

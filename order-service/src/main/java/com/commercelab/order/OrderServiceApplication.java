@@ -1,7 +1,9 @@
 package com.commercelab.order;
 
+import com.commercelab.order.events.EventJson;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
 
 /**
  * Entry point for the order-service.
@@ -12,6 +14,11 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  */
 @SpringBootApplication
 public class OrderServiceApplication {
+
+    @Bean
+    EventJson eventJson() {
+        return new EventJson();
+    }
 
     public static void main(String[] args) {
         SpringApplication.run(OrderServiceApplication.class, args);
