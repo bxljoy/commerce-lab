@@ -77,6 +77,7 @@ class ConsumerOffsetIT {
     @Autowired ConcurrentKafkaListenerContainerFactory<String, String> workflowKafkaListenerContainerFactory;
     @Autowired org.springframework.kafka.core.ConsumerFactory<String, String> workflowConsumerFactory;
     @Autowired PartitionFailureHandler failures;
+    @Autowired org.springframework.context.ApplicationEventPublisher publisher;
     @Autowired org.springframework.kafka.config.KafkaListenerEndpointRegistry listeners;
     @Autowired com.commercelab.order.service.OrderService orders;
     AdminClient admin;
@@ -267,7 +268,7 @@ class ConsumerOffsetIT {
                     });
             return proxy;
         });
-        var configured = new ConsumerConfiguration().workflowKafkaListenerContainerFactory(factory, failures);
+        var configured = new ConsumerConfiguration().workflowKafkaListenerContainerFactory(factory, failures, publisher);
         var event = event();
         var follower = event();
         hook.release = new CountDownLatch(1);

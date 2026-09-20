@@ -24,6 +24,8 @@ import org.springframework.kafka.listener.CommonErrorHandler;
 import org.springframework.kafka.listener.ConsumerAwareRebalanceListener;
 import org.springframework.kafka.listener.ListenerExecutionFailedException;
 import org.springframework.kafka.listener.MessageListenerContainer;
+import org.springframework.kafka.event.ConsumerStartingEvent;
+import org.springframework.kafka.event.ConsumerStoppedEvent;
 import org.springframework.transaction.CannotCreateTransactionException;
 
 public final class PartitionFailureHandler implements CommonErrorHandler, AutoCloseable {
@@ -31,6 +33,7 @@ public final class PartitionFailureHandler implements CommonErrorHandler, AutoCl
     private final ConsumerMetrics metrics;
     private final ScheduledExecutorService scheduler;
     private final Map<TopicPartition, Assignment> assignments = new HashMap<>();
+    private final ThreadLocal<ConsumerThread> consumerThread = new ThreadLocal<>();
     private boolean closed;
 
     public PartitionFailureHandler(ConsumerMetrics metrics) {
@@ -104,22 +107,40 @@ public final class PartitionFailureHandler implements CommonErrorHandler, AutoCl
         }
     }
 
-    public synchronized void succeeded(ConsumerRecord<?, ?> record, ProcessingOutcome outcome) {
+    synchronized Assignment processingAssignment(ConsumerRecord<?, ?> record) {
+        var state = assignments.get(new TopicPartition(record.topic(), record.partition()));
+        var thread = consumerThread.get();
+        return state != null && thread != null && state.owner == thread.owner
+                && state.container == thread.container ? state : null;
+    }
+
+    synchronized void succeeded(ConsumerRecord<?, ?> record, ProcessingOutcome outcome, Assignment processing) {
         var tp = new TopicPartition(record.topic(), record.partition());
         Assignment state = assignments.get(tp);
-        if (state != null) {
+        if (state != null && state == processing) {
             cancel(state);
             state.nextDelay = 1;
             state.failedOffset = null;
+            metrics.blocked(tp.partition(), false);
         }
-        metrics.blocked(tp.partition(), false);
         metrics.outcome(tp.partition(), outcome == ProcessingOutcome.APPLIED ? "applied" : "duplicate", "OK");
     }
 
-    public ConsumerAwareRebalanceListener rebalanceListener(MessageListenerContainer container) {
+    // Called synchronously by the child's publisher, before application event dispatch.
+    void consumerLifecycle(Object event) {
+        if (event instanceof ConsumerStartingEvent starting) {
+            consumerThread.set(new ConsumerThread(starting.getSource(MessageListenerContainer.class)));
+        } else if (event instanceof ConsumerStoppedEvent stopped) {
+            var thread = consumerThread.get();
+            if (thread != null && thread.container == stopped.getSource(MessageListenerContainer.class))
+                consumerThread.remove();
+        }
+    }
+
+    public ConsumerAwareRebalanceListener rebalanceListener() {
         return new ConsumerAwareRebalanceListener() {
             @Override public void onPartitionsAssigned(Consumer<?, ?> consumer, Collection<TopicPartition> partitions) {
-                assigned(consumer, partitions, container);
+                assigned(consumer, partitions);
             }
             @Override public void onPartitionsRevokedBeforeCommit(Consumer<?, ?> consumer,
                     Collection<TopicPartition> partitions) { revoked(consumer, partitions); }
@@ -128,8 +149,10 @@ public final class PartitionFailureHandler implements CommonErrorHandler, AutoCl
         };
     }
 
-    private synchronized void assigned(Consumer<?, ?> consumer, Collection<TopicPartition> partitions,
-            MessageListenerContainer container) {
+    private synchronized void assigned(Consumer<?, ?> consumer, Collection<TopicPartition> partitions) {
+        var thread = consumerThread.get();
+        if (thread == null) throw new IllegalStateException("Missing consumer thread binding");
+        thread.owner = consumer;
         for (var tp : partitions) {
             Assignment old = assignments.get(tp);
             if (old != null && old.owner == consumer) continue; // Cooperative retained ownership.
@@ -137,9 +160,9 @@ public final class PartitionFailureHandler implements CommonErrorHandler, AutoCl
                 cancel(old);
                 old.container.resumePartition(tp);
             }
-            // Retain the child while assigned. Calling the concurrent parent during revocation
-            // would contend with its stop() lifecycle lock while it waits for this consumer.
-            assignments.put(tp, new Assignment(consumer, container.getContainerFor(tp.topic(), tp.partition())));
+            // A previous child can still advertise this partition after poll timeout.
+            // Only the publishing consumer thread identifies the actual child.
+            assignments.put(tp, new Assignment(consumer, thread.container));
             metrics.blocked(tp.partition(), false);
         }
     }
@@ -198,7 +221,13 @@ public final class PartitionFailureHandler implements CommonErrorHandler, AutoCl
         scheduler.shutdownNow();
     }
 
-    private static final class Assignment {
+    private static final class ConsumerThread {
+        final MessageListenerContainer container;
+        Consumer<?, ?> owner;
+        ConsumerThread(MessageListenerContainer container) { this.container = container; }
+    }
+
+    static final class Assignment {
         final Consumer<?, ?> owner;
         final MessageListenerContainer container;
         Long failedOffset;

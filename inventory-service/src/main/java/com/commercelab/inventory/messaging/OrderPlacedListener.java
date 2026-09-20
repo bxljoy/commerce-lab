@@ -28,6 +28,7 @@ public class OrderPlacedListener {
             groupId = ConsumerConfiguration.GROUP, containerFactory = "workflowKafkaListenerContainerFactory",
             autoStartup = "${inventory.events.enabled:true}")
     public void onRecord(ConsumerRecord<String, String> record) {
+        var assignment = failures.processingAssignment(record);
         var previous = MDC.getCopyOfContextMap();
         try {
             MDC.clear();
@@ -38,7 +39,7 @@ public class OrderPlacedListener {
             var outcome = handler.handle(record.key(), record.value());
             // The injected application handler is a Spring transaction proxy: return means committed.
             hook.afterDatabaseCommit(event.eventId(), outcome);
-            failures.succeeded(record, outcome);
+            failures.succeeded(record, outcome, assignment);
             LOG.info("consumer={} eventId={} orderId={} outcome={}",
                     ConsumerConfiguration.GROUP, event.eventId(), event.orderId(), outcome);
         } finally {

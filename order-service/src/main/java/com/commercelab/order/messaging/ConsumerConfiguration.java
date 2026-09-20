@@ -7,6 +7,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
@@ -38,7 +39,8 @@ public class ConsumerConfiguration {
 
     @Bean
     ConcurrentKafkaListenerContainerFactory<String, String> workflowKafkaListenerContainerFactory(
-            ConsumerFactory<String, String> workflowConsumerFactory, PartitionFailureHandler failures) {
+            ConsumerFactory<String, String> workflowConsumerFactory, PartitionFailureHandler failures,
+            ApplicationEventPublisher publisher) {
         var factory = new ConcurrentKafkaListenerContainerFactory<String, String>();
         factory.setConsumerFactory(workflowConsumerFactory);
         factory.setConcurrency(3);
@@ -46,8 +48,13 @@ public class ConsumerConfiguration {
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.RECORD);
         factory.getContainerProperties().setSyncCommits(true);
         factory.getContainerProperties().setPollTimeout(1000);
-        factory.setContainerCustomizer(container -> container.getContainerProperties()
-                .setConsumerRebalanceListener(failures.rebalanceListener(container)));
+        factory.setContainerCustomizer(container -> {
+            container.setApplicationEventPublisher(event -> {
+                failures.consumerLifecycle(event);
+                publisher.publishEvent(event);
+            });
+            container.getContainerProperties().setConsumerRebalanceListener(failures.rebalanceListener());
+        });
         return factory;
     }
 

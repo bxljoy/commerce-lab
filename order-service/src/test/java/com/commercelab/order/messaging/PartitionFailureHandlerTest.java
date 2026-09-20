@@ -26,10 +26,10 @@ class PartitionFailureHandlerTest {
     final PartitionFailureHandler handler = new PartitionFailureHandler(metrics, scheduler);
 
     @BeforeEach void assigned() {
-        when(container.getContainerFor(p0.topic(), 0)).thenReturn(container);
+        handler.consumerLifecycle(new org.springframework.kafka.event.ConsumerStartingEvent(container, container));
         when(scheduler.schedule(any(Runnable.class), anyLong(), eq(TimeUnit.SECONDS)))
                 .thenReturn(mock(ScheduledFuture.class));
-        handler.rebalanceListener(container).onPartitionsAssigned(consumer, List.of(p0));
+        handler.rebalanceListener().onPartitionsAssigned(consumer, List.of(p0));
     }
     @AfterEach void close() { handler.close(); MDC.clear(); }
 
@@ -72,7 +72,7 @@ class PartitionFailureHandlerTest {
         verify(scheduler, times(70)).schedule(any(Runnable.class), delays.capture(), eq(TimeUnit.SECONDS));
         assertThat(delays.getAllValues().subList(0, 7)).containsExactly(1L, 2L, 4L, 8L, 16L, 30L, 30L);
         assertThat(delays.getAllValues()).allMatch(n -> n > 0 && n <= 30);
-        handler.succeeded(record, ProcessingOutcome.DUPLICATE);
+        handler.succeeded(record, ProcessingOutcome.DUPLICATE, handler.processingAssignment(record));
         assertThat(blocked()).isZero();
         assertThat(meters.get("consumer.duplicate").counter().count()).isEqualTo(1);
         handler.handleOne(new TransientDataAccessResourceException("private"), record, consumer, container);
@@ -83,15 +83,15 @@ class PartitionFailureHandlerTest {
         handler.handleOne(new TransientDataAccessResourceException("private"), record, consumer, container);
         var tasks = ArgumentCaptor.forClass(Runnable.class);
         verify(scheduler).schedule(tasks.capture(), eq(1L), eq(TimeUnit.SECONDS));
-        handler.rebalanceListener(container).onPartitionsRevokedBeforeCommit(consumer, List.of(p0));
+        handler.rebalanceListener().onPartitionsRevokedBeforeCommit(consumer, List.of(p0));
         verify(container).resumePartition(p0);
         assertThat(blocked()).isZero();
-        handler.rebalanceListener(container).onPartitionsAssigned(consumer, List.of(p0));
+        handler.rebalanceListener().onPartitionsAssigned(consumer, List.of(p0));
         handler.handleOne(new EventProtocolException("INVALID_JSON"), record, consumer, container);
         tasks.getValue().run();
         verify(container, times(1)).resumePartition(p0);
         assertThat(blocked()).isEqualTo(1);
-        handler.rebalanceListener(container).onPartitionsLost(consumer, List.of(p0));
+        handler.rebalanceListener().onPartitionsLost(consumer, List.of(p0));
         verify(container, times(2)).resumePartition(p0);
         assertThat(blocked()).isZero();
     }
@@ -129,14 +129,14 @@ class PartitionFailureHandlerTest {
     }
 
     @Test void revocationClearsTheOwningChildWithoutTakingTheParentLifecycleLock() {
-        handler.rebalanceListener(container).onPartitionsRevokedBeforeCommit(consumer, List.of(p0));
+        handler.rebalanceListener().onPartitionsRevokedBeforeCommit(consumer, List.of(p0));
         var child = mock(MessageListenerContainer.class);
-        when(container.getContainerFor(p0.topic(), 0)).thenReturn(child);
-        handler.rebalanceListener(container).onPartitionsAssigned(consumer, List.of(p0));
+        handler.consumerLifecycle(new org.springframework.kafka.event.ConsumerStartingEvent(child, container));
+        handler.rebalanceListener().onPartitionsAssigned(consumer, List.of(p0));
         clearInvocations(container);
         handler.handleOne(new EventProtocolException("INVALID_JSON"), record, consumer, container);
         verify(child).pausePartition(p0);
-        handler.rebalanceListener(container).onPartitionsRevokedBeforeCommit(consumer, List.of(p0));
+        handler.rebalanceListener().onPartitionsRevokedBeforeCommit(consumer, List.of(p0));
         verify(child).resumePartition(p0);
         verify(container, never()).pausePartition(any());
         verify(container, never()).resumePartition(any());
@@ -147,6 +147,30 @@ class PartitionFailureHandlerTest {
         handler.close();
         verify(scheduler).shutdownNow();
         assertThat(blocked()).isZero();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    void lateSuccessCannotClearNewOwnersBlock(boolean transientFailure) {
+        var processing = handler.processingAssignment(record);
+        var nextConsumer = mock(Consumer.class);
+        var nextChild = mock(MessageListenerContainer.class);
+        handler.consumerLifecycle(new org.springframework.kafka.event.ConsumerStartingEvent(nextChild, container));
+        handler.rebalanceListener().onPartitionsAssigned(nextConsumer, List.of(p0));
+        Exception failure = transientFailure ? new CommitFailedException() : new EventProtocolException("INVALID_JSON");
+        handler.handleOne(failure, record, nextConsumer, nextChild);
+        handler.succeeded(record, ProcessingOutcome.APPLIED, processing);
+        assertThat(blocked()).isEqualTo(1);
+        if (transientFailure) {
+            var task = ArgumentCaptor.forClass(Runnable.class);
+            verify(scheduler).schedule(task.capture(), eq(1L), eq(TimeUnit.SECONDS));
+            task.getValue().run();
+            verify(nextChild).resumePartition(p0);
+        }
+        handler.handleOne(failure, new ConsumerRecord<>(p0.topic(), 0, 5, "key", "later"),
+                nextConsumer, nextChild);
+        verify(nextConsumer, times(2)).seek(p0, 4);
+        verify(nextConsumer, never()).seek(p0, 5);
     }
 
     private double blocked() {
