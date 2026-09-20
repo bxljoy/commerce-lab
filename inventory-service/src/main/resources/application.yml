@@ -18,6 +18,8 @@ spring:
     enabled: true
 
 inventory:
+  events:
+    enabled: ${INVENTORY_EVENTS_ENABLED:true}
   outbox:
     enabled: ${INVENTORY_OUTBOX_ENABLED:true}
     poll-interval-ms: 1000

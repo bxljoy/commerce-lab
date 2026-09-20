@@ -25,6 +25,8 @@ spring:
     enabled: true                    # runs db/migration/V*.sql on startup, before JPA validation
 
 order:
+  events:
+    enabled: ${ORDER_EVENTS_ENABLED:true}
   outbox:
     enabled: ${OUTBOX_ENABLED:true}
     poll-interval-ms: 1000
