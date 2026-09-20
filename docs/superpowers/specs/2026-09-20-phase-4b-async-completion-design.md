@@ -1,6 +1,6 @@
 # Phase 4B, Slice 1: Async Order Completion
 
-Status: conversational design approved; written spec awaiting user review.
+Status: written spec approved by user; implementation plan awaiting review.
 Date: 2026-09-20
 Baseline: main at c411c8d. Phase 4A hosted CI passed in run 35494095946.
 
