@@ -10,7 +10,8 @@
 
 **Spec:** [Approved design](../specs/2026-09-20-phase-4b-async-completion-design.md).
 
-Status: proposed implementation plan, awaiting user review. No product code implemented.
+Status: approved by user; slice 1 locally implemented on codex/phase-4b-async-completion.
+Task 7 final local verification passed; whole-branch review and hosted CI pending.
 Baseline: c411c8d (Phase 4A); specification commit 94256bc.
 
 ## Global Constraints
@@ -57,6 +58,21 @@ These abbreviations expand to exact paths, not separate modules.
 - `scripts/fixtures/async-completion-proof.py` and Compose override: real-process evidence.
 
 ## Execution and Review Gates
+
+### Progress
+
+- [x] Task 1: contracts/decoders, 20573f2, independent review approved.
+- [x] Task 2: atomic inventory intake, 3a68780, independent review approved.
+- [x] Task 3: inventory relay, 1b3526e, independent review approved.
+- [x] Task 4: order completion, 83dd707, independent review approved.
+- [x] Task 5: Kafka listeners and partition safety, 5477ff9 + 2ff6fad, independent review and fix re-review approved.
+- [x] Task 6: end-to-end and process-crash evidence, 518fcc3 + 64366a1, independent review approved.
+- [x] Task 7: CI/documentation and final local verification (1005 Java, 27 Python, four images and four exit97 cleanup cases; task7-final-* logs).
+- [ ] Whole-branch independent review and resolution of actionable findings.
+- [ ] Hosted Phase 4B CI (no merge/push authorized or performed).
+
+The detailed checkboxes below describe execution steps; the reviewed task status
+above is authoritative while per-step evidence is recorded in task reports.
 
 Tasks are sequential: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7. Each has a red/green test cycle and a commit; review its deliverable before proceeding. Test-only skeletons may fail compilation in the initial red step, but the final red run must demonstrate the behavioral failure before the implementation is considered proven. Do not weaken existing assertions merely to make new consumers pass.
 
@@ -275,8 +291,16 @@ return true;
 
 **Files:** Modify `.github/workflows/ci.yml`, `order-service/src/test/java/com/commercelab/order/CiStructureTest.java`, `README.md`, `contracts/README.md`, `docs/notes-verification.md`; create `docs/adr/0009-idempotent-event-consumers.md`. Update this plan's checkboxes and approved spec status only to reflect actual evidence. Relevant existing vault notes may be updated separately without committing unrelated vault edits.
 
-- [ ] Add a failing CiStructureTest asserting new Python proof suite, real image command, and deliberate-failure cleanup membership. Run `mvn -f order-service/pom.xml -Dtest=CiStructureTest test` red.
-- [ ] Add CI steps after service verifies and old image proofs:
+Execution scope addition: the final image matrix exposed an absent offset-row
+observation during Kafka rebalance. Fix `scripts/fixtures/async-completion-proof.py`
+and cover it in `scripts/fixtures/test-async-completion-proof.py`; report/review
+scope includes both. RED 12 tests/3 assertion failures, GREEN 12 tests. Missing
+rows wait within the existing deadline and cannot count as an uncommitted offset;
+malformed/ambiguous rows still fail. No product runtime changes. Preserve failed
+run `task7-async-image.log`; fresh full matrix uses `task7-final-*` logs.
+
+- [x] Add a failing CiStructureTest asserting new Python proof suite, real image command, and deliberate-failure cleanup membership. Run `mvn -f order-service/pom.xml -Dtest=CiStructureTest test` red (5 tests, 2 expected failures; task7-ci-red.log).
+- [x] Add CI steps after service verifies and old image proofs:
 
 ```yaml
 - name: Verify async proof boundaries
@@ -285,11 +309,13 @@ return true;
   run: make verify-async-completion
 ```
 
-- [ ] Include verify-async-completion in the existing failure-cleanup loop; do not remove startup-agent or old proof gates. Run CiStructureTest green.
-- [ ] Write runbook with topic/group names, toggles, event schemas, transition table, DB/offset inspection commands, blocked-partition diagnosis, and restart after correction without offset skipping. Explain that unknown/poison input remains unavailable until later replay tooling. Describe clean deployment/topic initialization before listener enablement, retained backlog consumption, and inability to recover deleted delivered events automatically. Existing HTTP release is unsupported on async-owned reservations. No automatic downgrade promise.
-- [ ] Record rejected alternatives, transaction/offset boundary, retention/dedup lifetime, fixed topology, and limits in ADR0009. Update scoreboard specifically for this slice; leave cancellation/compensation/DLQ checklist entries incomplete. Distinguish local results from hosted CI and list exact commands/environments and stable IDs/offsets for each crash proof.
-- [ ] Final verification: `make verify`; both Python suites; all four image proofs and all four failure-cleanup scenarios. Inspect `git diff --check`, generated artifacts, and changed file scope. Resolve all actionable whole-branch review findings and rerun affected tests before completion.
-- [ ] Commit `docs: record async consumer guarantees and verification`. Do not merge/push without the user's integration choice. Update vault claims only after evidence exists, preserving unrelated uncommitted changes.
+- [x] Include verify-async-completion in the existing failure-cleanup loop; do not remove startup-agent or old proof gates. Run CiStructureTest green (5 tests; task7-ci-green.log).
+- [x] Write runbook with topic/group names, toggles, event schemas, transition table, DB/offset inspection commands, blocked-partition diagnosis, and restart after correction without offset skipping. Explain that unknown/poison input remains unavailable until later replay tooling. Describe clean deployment/topic initialization before listener enablement, retained backlog consumption, and inability to recover deleted delivered events automatically. Existing HTTP release is unsupported on async-owned reservations. No automatic downgrade promise.
+- [x] Record rejected alternatives, transaction/offset boundary, retention/dedup lifetime, fixed topology, and limits in ADR0009. Update scoreboard specifically for this slice; leave cancellation/compensation/DLQ checklist entries incomplete. Distinguish local results from hosted CI and list exact commands/environments and stable IDs/offsets for each crash proof.
+- [x] Final local verification: `make verify` (1005 tests); both Python suites (15+12); all four image proofs and all four exit97 failure-cleanup scenarios. Inspect `git diff --check`, generated artifacts, and changed file scope. Final 231-file executable manifests match; exact commands/logs/IDs/offsets and the retained failed attempt are in the scoreboard and scratch/task-7-report.md.
+- [ ] Whole-branch review: resolve all actionable findings and rerun affected tests before integration. Explicitly pending, not replaced by Task 7 author self-check.
+- [x] Commit `docs: record async consumer guarantees and verification`. No merge/push; separate integration choice required.
+- [ ] Optional vault updates: controller-only, separate from this worker; preserve unrelated edits.
 
 ## Self-Review and Coverage Map
 

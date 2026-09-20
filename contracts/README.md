@@ -2,7 +2,7 @@
 
 These hand-maintained v1 JSON expectations are independent of OpenAPI generation
 and producer DTOs. Inventory expectations preserve the public reserve/release API
-contract; order expectations represent a public API client. The active 4A order service does not
+contract; order expectations represent a public API client. The active order service does not
 consume inventory HTTP responses. They are examples plus deliberately
 small, explicit Jackson/AssertJ checks, not a general schema engine or a shared
 production Java library.
@@ -78,6 +78,53 @@ in the caller's transaction with real PostgreSQL.
 mvn -f order-service/pom.xml -Dtest=OrderPlacedEventTest test
 mvn -f order-service/pom.xml -Dtest=OrderPlacedEventTest -Dit.test=OutboxMigrationIT,FlywayMigrationIT verify
 ```
+
+## Inventory result events v1
+
+`events/inventory/v1/inventory-reserved.schema.json` and
+`inventory-rejected.schema.json`, with their adjacent JSON examples, define
+`InventoryReserved` and `InventoryRejected`. Both use `commerce.inventory.v1`
+and canonical lowercase `orderId` keys. The unchanged OrderPlaced v1 source is
+`commerce.orders.v1`. Both topics have three partitions, RF1 and seven-day delete
+retention; schemas do not imply indefinite delivery availability.
+
+The result envelope contains `eventId`, `eventType`, integer `schemaVersion: 1`,
+`occurredAt`, `orderId`, `correlationId`, `causationId` and ordered `lines`.
+The causation ID is the original OrderPlaced event ID, not the result's ID.
+IDs/timestamp/key/payload are generated once and persisted unchanged for retries;
+new results emit UTC timestamps. Customer data, prices, HTTP request keys and
+exception text are excluded. Shared UUID values accept full-width hex in either
+case; incoming timestamps accept valid RFC3339 offsets, while keys remain canonical.
+
+Reserved results have no reason/shortages. Rejected results require
+`reasonCode: INSUFFICIENT_STOCK` and nonempty `shortages`: each distinct SKU must
+refer to a requested line with the same `requested` quantity and
+`0 <= available < requested`. Unknown stock uses available zero. Public order
+rejectionReason remains `STOCK_UNAVAILABLE` for HTTP compatibility.
+
+Service-local strict decoders reject tombstones, malformed/duplicate-key JSON,
+unknown fields, unsupported type/version, missing fields, scalar coercion,
+overflow, blank/duplicate SKUs and key/order disagreement. Decoders and mutation
+tests enforce cross-field constraints in addition to the written schemas.
+Results must match persisted causation, correlation and ordered SKU/quantity
+content before acceptance. Parsed JSON inbox equality ignores object member
+order but preserves arrays and actual JSON values; it is not typed UUID/time
+normalization. Changed content with the same event ID is a protocol conflict.
+
+```sh
+mvn -f inventory-service/pom.xml -Dtest=EventContractTest test
+mvn -f order-service/pom.xml -Dtest=InventoryResultContractTest test
+python3 -B scripts/fixtures/test-async-completion-proof.py
+make verify-async-completion
+```
+
+The Python suite checks proof mechanics, not actual crashes. The image proof
+executes real HTTP, PostgreSQL and Kafka with two consumer SIGKILL boundaries;
+see the [verification scoreboard](../docs/notes-verification.md#phase-4b-workflow-recovery)
+for stable identities/offsets and limitations. Unknown/poison inputs are not
+silently discarded: they block their partition pending operator correction or
+future repair tooling. HTTP reserve/release remains independently tested, but
+manual release of async-owned reservations is unsupported until compensation.
 
 ## HTTP Contract Limits
 

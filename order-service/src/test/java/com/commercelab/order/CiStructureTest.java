@@ -28,12 +28,25 @@ class CiStructureTest {
         assertThat(String.join("\n", runs)).doesNotContain("verify-sync-recovery");
     }
 
-    @Test void deliberateFailureLoopCoversAllThreeImagesAndChecksExit97() throws Exception {
+    @Test void asyncProofGatesFollowServiceAndHistoricalImageVerification() throws Exception {
+        var runs = steps().stream().map(step -> step.getOrDefault("run", "").toString()).toList();
+        String boundaries = "python3 -B scripts/fixtures/test-async-completion-proof.py";
+        String image = "make verify-async-completion";
+        assertThat(runs).contains(boundaries, image);
+        for (String prerequisite : List.of("make verify-order 2>&1 | tee test-output.log",
+                "make verify-inventory", "make verify-restart", "make verify-inventory-image",
+                "make verify-outbox-recovery")) {
+            assertThat(runs.indexOf(boundaries)).isGreaterThan(runs.indexOf(prerequisite));
+        }
+        assertThat(runs.indexOf(image)).isGreaterThan(runs.indexOf(boundaries));
+    }
+
+    @Test void deliberateFailureLoopCoversAllFourImagesAndChecksExit97() throws Exception {
         var cleanup = steps().stream().map(step -> step.getOrDefault("run", "").toString())
                 .filter(run -> run.contains("VERIFY_FAIL_AFTER_START")).toList();
         assertThat(cleanup).hasSize(1);
         assertThat(cleanup.getFirst()).contains(
-                "for script in verify-order-restart verify-inventory-service verify-outbox-recovery; do",
+                "for script in verify-order-restart verify-inventory-service verify-outbox-recovery verify-async-completion; do",
                 "status=0", "VERIFY_FAIL_AFTER_START=1 bash \"scripts/${script}.sh\" || status=$?",
                 "test \"$status\" -eq 97").doesNotContain("verify-sync-recovery");
     }

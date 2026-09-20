@@ -63,9 +63,15 @@ jobs:
       - name: Verify outbox process-crash recovery and duplicate publication
         run: make verify-outbox-recovery
 
+      - name: Verify async proof boundaries
+        run: python3 -B scripts/fixtures/test-async-completion-proof.py
+
+      - name: Verify asynchronous completion and consumer crash recovery
+        run: make verify-async-completion
+
       - name: Verify isolated Compose failure cleanup
         run: |
-          for script in verify-order-restart verify-inventory-service verify-outbox-recovery; do
+          for script in verify-order-restart verify-inventory-service verify-outbox-recovery verify-async-completion; do
             status=0
             VERIFY_FAIL_AFTER_START=1 bash "scripts/${script}.sh" || status=$?
             test "$status" -eq 97

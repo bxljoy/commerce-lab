@@ -75,6 +75,37 @@ class ProofTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 proof.require_duplicates(records)
 
+    def test_group_offset_waits_for_selected_row_including_explicit_uncommitted(self):
+        group, topic = proof.GROUPS["inventory"], proof.TOPICS["inventory"]
+        for text, expected in (("12", 12), ("-", None)):
+            with self.subTest(offset=text), \
+                    patch.object(proof, "compose", side_effect=[
+                        "Warning: Consumer group is rebalancing.\n",
+                        f"{group} {topic} 0 {text} 13 1"]) as command, \
+                    patch.object(proof.Deadline, "sleep"):
+                deadline = proof.Deadline(60, "offset row")
+                self.assertEqual(proof.group_offset("inventory", {"partition": 0}, deadline), expected)
+                self.assertEqual(command.call_count, 2)
+                self.assertTrue(all(call.kwargs["deadline"] is deadline for call in command.call_args_list))
+
+    def test_missing_offset_row_exhausts_deadline_instead_of_proving_no_commit(self):
+        deadline = proof.Deadline(60, "offset row")
+        with patch.object(proof, "compose", return_value=""), \
+                patch.object(deadline, "sleep", side_effect=TimeoutError("offset row deadline")):
+            with self.assertRaises(TimeoutError):
+                proof.group_offset("inventory", {"partition": 0}, deadline)
+
+    def test_group_offset_does_not_retry_ambiguous_or_malformed_selected_rows(self):
+        group, topic = proof.GROUPS["inventory"], proof.TOPICS["inventory"]
+        row = f"{group} {topic} 0 12 13 1"
+        for text, error in ((row + "\n" + row, AssertionError),
+                            (f"{group} {topic} 0 garbage 13 1", ValueError)):
+            with self.subTest(output=text), patch.object(proof, "compose", return_value=text), \
+                    patch.object(proof.Deadline, "sleep") as sleep:
+                with self.assertRaises(error):
+                    proof.group_offset("inventory", {"partition": 0}, proof.Deadline(60, "offset row"))
+                sleep.assert_not_called()
+
     def test_nested_commands_cannot_reset_aggregate_deadline(self):
         deadline = proof.Deadline(60, "aggregate")
         with patch.object(proof.runtime.time, "monotonic", return_value=deadline.end - 0.25), \

@@ -23,8 +23,8 @@ See [ADR-0004](adr/0004-evidence-driven-learning-roadmap.md) for the revised sco
 | 2 | Reliable Postgres persistence and bounded cleanup | ✅ |
 | 3A | Inventory correctness under tested PostgreSQL contention shapes | ✅ |
 | 3B | Sync integration, idempotency, uncertain-outcome recovery | ✅ Merged at ca525d1; hosted CI succeeded |
-| 4A | Durable event delivery through an outbox | 🟡 Locally verified and reviewed; hosted CI pending |
-| 4B | Workflow recovery, compensation, idempotent consumers, DLQ | ⬜ |
+| 4A | Durable event delivery through an outbox | ✅ Baseline c411c8d; hosted CI passed in run 35494095946 |
+| 4B | Workflow recovery, compensation, idempotent consumers, DLQ | 🟡 Slice 1 locally implemented; whole-branch review/hosted CI pending; compensation and DLQ remain |
 | 5 | Observability — logs/metrics/traces across the system | ⬜ |
 | 6 | Frontend slice + E2E; core finish line | ⬜ |
 | 7 | Optional capstone (gateway/auth, rate limiter, CQRS, vthreads, deploy) | ⬜ |
@@ -219,6 +219,10 @@ owned by the controller and are not part of Task 6's worktree changes.
 
 ### Phase 4A: durable event delivery
 
+Historical closeout below retains its original pending-CI wording. The approved
+Phase 4B baseline records Phase 4A hosted CI success in run 35494095946; this does
+not establish hosted CI for the new branch.
+
 Implementation and local image evidence recorded on 2026-09-19.
 **Independent task reviews, whole-branch review and scoped re-review complete.**
 The final nonblocking correlation-ID finding was fixed in `9d9b73f` with a red/green
@@ -325,15 +329,150 @@ tolerance. See [ADR-0008](adr/0008-transactional-outbox-and-polling-relay.md).
 
 ### Phase 4B: workflow recovery
 
-- [ ] Dedup record, stock mutation, and inventory result outbox commit atomically.
-- [ ] Inventory publication survives restart; order result consumption is idempotent.
-- [ ] Crash after consumer DB commit but before acknowledgement; redelivery has one business effect.
+- [x] Dedup record, stock mutation, and inventory result outbox commit atomically.
+- [x] Inventory publication survives restart; order result consumption is idempotent.
+- [x] Crash after consumer DB commit but before acknowledgement; redelivery has one business effect.
+- [x] Confirmation and rejection without cancellation (slice 1; Task 6 reviewed evidence).
 - [ ] Demonstrate confirmation, rejection, and one cancel/release compensation path.
 - [ ] Delayed/duplicate reservation success after cancellation cannot reconfirm an
   order or leak reserved stock; recovery converges after services restart.
-- [ ] Test concurrent transition protection; transport ordering alone does not
+- [x] Test concurrent transition protection; transport ordering alone does not
   protect stock shared by different orders.
 - [ ] Poison messages reach a DLQ after bounded retries; repaired replay is safe.
+- [ ] Whole-branch review and resolution of actionable findings.
+- [ ] Hosted Phase 4B CI; merge/push requires a separate integration choice.
+
+#### Slice 1 coverage
+
+Fresh Task 7 verification on 2026-09-20, from
+`/Users/bxl/.codex/worktrees/phase-4a-outbox/commerce-lab`, branch
+`codex/phase-4b-async-completion`, runtime base `64366a16acdc21ba210d61429cdfefa156a5f107`:
+
+| Command | Result | Retained log |
+| --- | --- | --- |
+| `mvn -f order-service/pom.xml -Dtest=CiStructureTest test` before CI edit | RED: 5 tests, 2 expected assertion failures, no errors/skips | `task7-ci-red.log` |
+| Same command after CI edit | GREEN: 5 tests | `task7-ci-green.log` |
+| `make verify` | PASS: order 369 unit/slice + 92 integration; inventory 465 + 79; total **1,005**, zero failures/errors/skips | `task7-final-verify.log` |
+| `python3 -B scripts/fixtures/test-outbox-proof.py` | PASS: **15** tests | `task7-final-python-outbox.log` |
+| `python3 -B scripts/fixtures/test-async-completion-proof.py` | PASS: **12** tests after rebalance regression additions; initial 9-test output also retained in `task7-python-async.log` | `task7-final-python-async.log` |
+
+Environment: macOS 26.6.2 arm64, Corretto 21.0.5, Maven 3.9.14, Python 3.14.3,
+Docker client 29.2.1 / engine 29.4.0 (OrbStack, linux/arm64), Compose v5.1.2.
+Application images use Temurin 21, PostgreSQL 16 and apache/kafka:3.7.1;
+Spring Boot 3.3.5, Spring Kafka 3.2.4 / clients 3.7.1, Testcontainers 1.20.4.
+All results are **local**, not hosted Phase 4B CI. Logs and verification driver
+are retained in `.superpowers/sdd/2026-09-20-phase-4b-async-completion/scratch/`;
+ignored local evidence is not a hosted artifact or permanent storage promise.
+
+The initial async image run (`task7-async-image.log`) failed after inventory
+SIGKILL/normal restart: Kafka group describe was rebalancing and omitted the
+selected partition row, so the harness asserted before waiting for assignment.
+Failed-run cleanup still verified zero owned resources. This was not counted as
+a passing async proof. The proof-only fix distinguishes absent rows from an
+observed `-` offset, polls absence within the existing deadline, and still rejects
+duplicate/malformed rows. Regression `task7-offset-red.log`: 12 tests, 3 assertion
+failures; `task7-offset-green.log`: 12 passing tests. Both harness files belong to
+the Task 7 commit/review scope; application runtime sources are unchanged.
+
+Fresh historical image regressions (all exit 0):
+
+| Command / log | Observation |
+| --- | --- |
+| `make verify-restart` / `task7-final-restart-image.log` | Project `commerce-restart-commerce-proof-nnzithub`; order `f42648c2-de4e-44b9-8806-bcb5030c27f1`, event `c5dc2709-211b-4dad-9f1d-9eceb6527896`; same pending identity, one immutable event, attempts0, total17.9999 and ordered lines after restart/replay |
+| `make verify-inventory-image` / `task7-final-inventory-image.log` | Project `commerce-inventory-commerce-proof-27lranpb`; new201/replay200, GET200/409/404, double release/released replay; stock restored APPLE10/BANANA5 |
+| `make verify-outbox-recovery` / `task7-final-outbox-image.log` | Project `commerce-outbox-commerce-proof-dmnqkpwp`; both JVM kills exit137; two HTTP orders, two delivered outbox rows, three Kafka publications, two pending orders and zero inventory effects |
+
+Outbox case A: order `c735e1eb-7b87-4632-9844-5872ab11096c`, event
+`0db5c0e1-0597-4126-96f1-90e33d024d8a`, `commerce.orders.v1` partition0/offset0,
+delivered attempt1 after pre-publication SIGKILL. Case B: order
+`4c9b8798-ec58-45c0-98a0-a2acaf8af78b`, event
+`057f9429-22cd-4960-b83e-b976f19672b3`, partition1/offset0 before the
+post-ack/pre-delivery SIGKILL, partition1/offset1 after normal restart; identical
+raw payload/key/event ID, delivered attempt2. Historical proofs explicitly disable
+workflow consumers; they do not substitute for async completion evidence.
+
+Final `make verify-async-completion` exited **0**, log `task7-final-async-image.log`,
+project `commerce-async-commerce-proof-twnftrvx`. These are real Java21 JVM PID1
+kills against PostgreSQL16/Kafka3.7.1, not mocked crashes or SQL-only fixtures.
+
+| Consumer crash | Order ID | Selected input event ID | Topic / partition / input offset | Committed offset before -> after |
+| --- | --- | --- | --- | --- |
+| Inventory | `f9fb67c3-dfca-4f08-8704-11a8d191631f` | `2cf0c882-0fb1-43c1-9620-ac231dd5e3a0` | `commerce.orders.v1` / 2 / 1 | 1 -> 2 |
+| Order | `03a3ad54-5348-4d89-8aba-68839e50f95a` | `712e2f6e-ad1f-4ca8-bcc0-55763c0a0dc9` | `commerce.inventory.v1` / 1 / 2 | 2 -> 3 |
+
+Groups are `commerce-inventory-order-placed-v1` and
+`commerce-order-inventory-result-v1`. Both selected APPLIED markers followed DB
+commit and preceded offset commit; both killed containers were stopped with
+exit137. Normal recreation removed proof environment/profile, selected events
+logged DUPLICATE, and actual group offsets advanced. Inventory preserved one
+inbox/attempt/reservation/line/result and APPLE7; immutable result ID
+`c46c2ba1-0dac-4736-ba81-a9070cbb97e3` did not change. Order preserved its complete
+snapshot: CONFIRMED/version1, one inbox/accepted identity, APPLE6 and one of each
+inventory effect; causation `b7647fa4-c4ff-4746-8d22-5af7bdb0d5d3` remained stable.
+
+Fresh-group retained order `9cb10317-cd3b-4809-a2a0-d000d5ecbdc0` confirmed with
+APPLE10->8; rejection `3e1769c1-a0f4-4b54-9636-4a65c12bd761` left APPLE8.
+Outage result `36d971a9-2f27-4e4a-a9ba-cb3349e8ddcb` remained pending with
+attempts3/SEND_FAILED, then completed after broker recovery. Both services started
+with consumers enabled and `getent hosts kafka` exit2, accepted HTTP work, and
+recovered with unchanged container identities and restartCount0. Final totals:
+**6 orders/OrderPlaced/order inbox/accepted/inventory inbox/results; 7 attempts;
+6 reservations/lines; 5 confirmed, 1 rejected; APPLE4/BANANA5**. The extra attempt
+is the independent inventory HTTP reserve/release performed during the outage.
+
+All four deliberate failure commands returned **97** and verified owned
+containers=0, networks=0, volumes=0, as did all four successful image projects:
+
+| Command | Project | Log |
+| --- | --- | --- |
+| `VERIFY_FAIL_AFTER_START=1 bash scripts/verify-order-restart.sh` | `commerce-restart-commerce-proof-soqeyari` | `task7-final-verify-order-restart-failure.log` |
+| `VERIFY_FAIL_AFTER_START=1 bash scripts/verify-inventory-service.sh` | `commerce-inventory-commerce-proof-6vaqsxni` | `task7-final-verify-inventory-service-failure.log` |
+| `VERIFY_FAIL_AFTER_START=1 bash scripts/verify-outbox-recovery.sh` | `commerce-outbox-commerce-proof-sbbpllul` | `task7-final-verify-outbox-recovery-failure.log` |
+| `VERIFY_FAIL_AFTER_START=1 bash scripts/verify-async-completion.sh` | `commerce-async-commerce-proof-tbeki9qt` | `task7-final-verify-async-completion-failure.log` |
+
+Final driver `task7-final-verification-driver.log` exited0. SHA-256 manifests
+`task7-final-executable-before.sha256` and `task7-final-executable-after.sha256`
+each cover **231 tracked non-Markdown files** under both services, scripts,
+contracts, plus Compose/Makefile/CI. Both manifest digests are
+`8926b796af125b4fb23d87a454f36113a9c284727e837549436d222fc2f932d0`;
+their diff is empty. Raw `task7-final-source-{before,after}.sha256` also retain
+the broader capture including Markdown. Only documentation was edited during
+the final matrix. The initial-to-final executable manifest delta is retained in
+`task7-harness-manifest-delta.log`: exactly the two disclosed harness files changed.
+Application sources/POMs/Compose/Makefile remain identical to `64366a1`.
+
+`git diff --check` passed; generated OpenAPI/build output stays ignored under
+service `target/` directories. No dynamic Mockito/Byte Buddy attachment warnings
+occurred. Expected negative configuration/constraint/protocol/outage diagnostics
+and bounded Kafka console observation timeouts remain visible; no log suppression.
+Cleanup is scoped to proof projects, not a global prune, and does not promise
+cleanup after harness SIGKILL, host loss or an unavailable daemon. No vault edits,
+merge or push occurred. Whole-branch review and hosted Phase 4B CI are pending.
+
+Tasks 1-6 were reviewed, including assignment-ownership correction `2ff6fad`
+and enabled-consumer cold-DNS startup correction `64366a1`. Task 7 adds CI/runbook
+closeout and a regression-tested proof observation fix; no product runtime code
+changes. Author self-check is not a
+whole-branch independent review. See [ADR-0009](adr/0009-idempotent-event-consumers.md)
+and the [runbook](../README.md#async-rollout-and-recovery-runbook).
+
+| Claim | Executable evidence | Boundary |
+| --- | --- | --- |
+| Strict envelopes and cross-field invariants | `EventContractTest`, `InventoryResultContractTest` | Service-local decoder/fixture mutations; not a generic schema engine |
+| Atomic inventory inbox/stock/attempt/result; duplicate/content conflicts, contention and rollback | `InventoryEventHandlerIT`, `InventoryEventMigrationIT` | Real PostgreSQL and existing stock locks; manual release after async intake unsupported |
+| Stable durable result identity and token-fenced retry | `OutboxDeliveryStoreIT`, `KafkaInventoryOutboxIT` | Real PostgreSQL/Kafka; acknowledged publication may duplicate |
+| Causation/content validation, unique accepted result, terminal state/version protection | `OrderResultHandlerIT`, `OrderResultMigrationIT` | Real PostgreSQL; unknown/historical unenrolled orders fail closed |
+| No offset skipping, healthy partition progress, commit failure/rebalance/restart behavior | Both `ConsumerOffsetIT` suites (9 cases each), `PartitionFailureHandlerTest` | Actual broker offsets plus deterministic stale-assignment race tests |
+| Post-commit boundary outside DB transaction; metadata-only diagnostics | `ConsumerListenerTest`, `ConsumerOffsetIT` | No raw event bodies or ID-valued metric labels |
+| Deferred listener startup, partial-start cleanup and shutdown ownership | Both `WorkflowConsumerLifecycleTest` suites | Lifecycle tests plus real enabled-cold-DNS image recovery |
+| CI keeps startup-agent, both Python suites, four images and four cleanup failures | `CiStructureTest` | Parsed workflow assertions; hosted execution remains pending |
+
+No cancellation/compensation/DLQ, automatic backfill/purge/downgrade, mixed-version
+deployment, broker HA, disk-loss recovery, or indefinite retention is claimed.
+Unknown/poison input blocks its partition until correction or later repair tooling;
+healthy partitions continue. Retained Phase 4A events can complete, deleted delivered
+events cannot be regenerated automatically. Inbox/attempt/original-event retention
+is required for deduplication and result validation.
 
 ### Phases 5 and 6: finish the core
 

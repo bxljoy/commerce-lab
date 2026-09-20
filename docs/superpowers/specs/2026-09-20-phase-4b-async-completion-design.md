@@ -1,6 +1,7 @@
 # Phase 4B, Slice 1: Async Order Completion
 
-Status: written spec approved by user; implementation plan awaiting review.
+Status: spec and implementation plan approved by user; slice 1 locally implemented.
+Whole-branch review and hosted Phase 4B CI remain pending. No merge/push performed.
 Date: 2026-09-20
 Baseline: main at c411c8d. Phase 4A hosted CI passed in run 35494095946.
 
@@ -223,10 +224,12 @@ Record exact commands, environments, and limits in the verification scoreboard;
 keep local evidence distinct from hosted CI results. Update relevant existing
 notes only after the claims have evidence, not merely an implementation.
 
-## Next Approval Gate
+## Remaining Gates
 
-Review this written spec. Approval permits writing the implementation plan;
-it does not yet authorize product-code changes. The plan must define concrete
-listener/error-handler settings, schema migrations, tests, proof harnesses, and
-delivery slices compatible with the existing pinned dependencies. Review the
-plan and select its execution method before implementation begins.
+The user approved this spec and its implementation plan. Tasks 1-6 have scoped
+review approval, including assignment-ownership and enabled cold-DNS startup fixes.
+Task 7 records local CI/runbook/verification evidence; see the implementation plan
+and verification scoreboard for exact commands and limits. Whole-branch review,
+resolution of its actionable findings, and hosted Phase 4B CI remain outstanding.
+Merge/push requires the user's separate integration choice. Cancellation,
+compensation and DLQ/replay tooling remain later slices, not completed work.

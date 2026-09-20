@@ -15,8 +15,8 @@ See [ADR-0004](docs/adr/0004-evidence-driven-learning-roadmap.md) for the revise
 
 | Service | Owns | Status |
 |---|---|---|
-| `order-service` | Order identity, atomic outbox, polling publication | Phase 4A locally verified and reviewed; hosted CI pending |
-| `inventory-service` | Stock, reservations and durable attempt replay | Phase 3B merged; Phase 4B consumer not started |
+| `order-service` | Order identity, outbox publication, guarded async completion | Phase 4B slice 1 locally implemented; whole-branch review and hosted CI pending |
+| `inventory-service` | Stock, reservations, inbox intake and durable result publication | Phase 4B slice 1 locally implemented; whole-branch review and hosted CI pending |
 | `frontend` | React SPA to place orders and watch them confirm | not started (Phase 6) |
 
 ## Tech stack
@@ -37,6 +37,7 @@ See [ADR-0004](docs/adr/0004-evidence-driven-learning-roadmap.md) for the revise
 
 For an existing Phase 3B database, follow the [upgrade runbook](#upgrade-and-rollback-runbook)
 before starting 4A. Old writers must be stopped and pending orders resolved first.
+For Phase 4A databases or a clean deployment, follow the [async rollout](#async-rollout-and-recovery-runbook).
 
 ```bash
 make test                   # both services' fast Surefire suites
@@ -48,6 +49,7 @@ make verify-inventory       # inventory-service full suite only
 make verify-restart         # isolated order image/restart proof
 make verify-inventory-image # isolated inventory image reserve/release proof
 make verify-outbox-recovery # real process kills and identical-event duplicate proof
+make verify-async-completion # terminal outcomes and both consumer crash boundaries
 make up                     # both service/database pairs, Kafka and topic provisioning
 make ps                     # show service health
 make logs                   # tail logs
@@ -91,10 +93,12 @@ bootstrap/listener setup; the Compose broker does not expose a host port.
 
 Image verification targets use unique Compose projects and loopback-only ephemeral
 ports, so they can coexist with the normal stack. The service-specific targets
-start only their own service/database pair. All three verify removal of their own
+start only their own service/database pair. All four verify removal of their own
 containers, volumes and networks on success or failure, without pruning other stacks.
 `VERIFY_FAIL_AFTER_START=1 bash scripts/verify-outbox-recovery.sh` deliberately exits
-97 after startup to exercise cleanup (also supported by both service-specific scripts).
+97 after startup to exercise cleanup (also supported by the other three scripts).
+Historical restart/inventory/outbox proofs explicitly disable event consumers;
+only the async proof claims full workflow completion.
 
 ### Verify Phase 0
 
@@ -113,7 +117,7 @@ then run `mvn -f order-service/pom.xml spring-boot:run`):
 ```bash
 # New intent: generate a key once; retain it for retries of this exact payload.
 ORDER_KEY=$(uuidgen)
-# place -> 202 PENDING_INVENTORY; includes Location (no completion consumer in 4A)
+# place -> 202 PENDING_INVENTORY; includes Location; poll GET for terminal outcome
 curl -i -X POST http://localhost:8080/api/v1/orders \
   -H 'Content-Type: application/json' \
   -H "Idempotency-Key: ${ORDER_KEY}" \
@@ -225,6 +229,9 @@ normal stack with the 4A project name or volumes.
 
 ### Phase 4A: pending-only orders and durable publication
 
+This section describes the historical publication-only boundary. The active
+Phase 4B workflow below adds consumers; the isolated 4A proof disables them.
+
 New valid orders return `202 PENDING_INVENTORY` with Location and Retry-After.
 Matching key/payload replay returns the same pending order and no new event;
 historical terminal replay returns 200 and emits no event. Changed valid payload
@@ -326,8 +333,114 @@ retained; purging and arbitrary corruption repair are outside 4A.
 
 See [ADR-0008](docs/adr/0008-transactional-outbox-and-polling-relay.md) and the
 [scoreboard](docs/notes-verification.md) for evidence and limits. Whole-branch
-review and scoped fixes are complete. Phase 4A hosted CI remains pending; local
+review and scoped fixes for Phase 4A are complete; its hosted CI passed in run
+35494095946. Phase 4B whole-branch review and hosted CI remain pending; local
 tests are not merge authorization.
+
+### Async rollout and recovery runbook
+
+Phase 4B slice 1 consumes `OrderPlaced` from `commerce.orders.v1` using group
+`commerce-inventory-order-placed-v1`, then publishes `InventoryReserved` or
+`InventoryRejected` to `commerce.inventory.v1`, consumed by group
+`commerce-order-inventory-result-v1`. Both topics have **3 partitions, RF1,
+delete retention 604800000 ms**. Keys are canonical lowercase order UUIDs.
+See [event schemas and validation](contracts/README.md#inventory-result-events-v1)
+and [ADR-0009](docs/adr/0009-idempotent-event-consumers.md).
+
+| Input / current state | Committed outcome |
+| --- | --- |
+| Valid reserved result / PENDING_INVENTORY | CONFIRMED, accepted result identity, version increment |
+| Valid rejected result / PENDING_INVENTORY | REJECTED; event INSUFFICIENT_STOCK maps to HTTP STOCK_UNAVAILABLE |
+| Identical event already in inbox | Duplicate success; no repeated stock/state/version change |
+| Same event ID, changed parsed content | Protocol failure; no mutation or offset skip |
+| Different result identity after acceptance, contradictory terminal result, unknown order | Protocol failure; current state preserved |
+
+New POST returns 202; matching replay returns 202 while pending and 200 once
+terminal. GET observes completion. No transition back to pending is supported.
+Inventory inbox, attempt, stock/reservation and result outbox commit together;
+order inbox, accepted identity and transition commit together. Listener offset
+commit follows the database commit, so a crash can redeliver. There is no network
+I/O in either business transaction and no distributed atomic commit.
+
+1. Stop old writers/consumers, back up both databases, and inventory pending
+   orders, unpublished rows, delivered timestamps and broker retention. Phase 4A
+   pending rows are valid upgrade input (unlike the earlier 3B-to-4A migration).
+   Do not delete or regenerate identities to make unresolved work disappear.
+2. Start databases and broker; initialize and inspect **both** topics before
+   enabling listeners. For a clean deployment use:
+
+   ```bash
+   docker compose up -d --wait postgres inventory-postgres kafka
+   docker compose run --rm topic-init
+   for topic in commerce.orders.v1 commerce.inventory.v1; do
+     docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --describe --topic "$topic"
+     docker compose exec -T kafka /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka:9092 --entity-type topics --entity-name "$topic" --describe
+   done
+   ORDER_EVENTS_ENABLED=false INVENTORY_EVENTS_ENABLED=false docker compose up -d --build --wait order-service inventory-service
+   ```
+
+   Confirm Flyway order V6 and inventory V4 applied in startup logs. Topic-init's
+   `--if-not-exists` does not repair topology/config drift. Do not change partition
+   count casually: assignment/error-state instrumentation assumes this topology.
+3. After inspection, enable listeners by recreating services:
+
+   ```bash
+   ORDER_EVENTS_ENABLED=true INVENTORY_EVENTS_ENABLED=true docker compose up -d --force-recreate --wait order-service inventory-service
+   ```
+
+   Stable existing groups resume committed offsets; a fresh group starts at the
+   earliest **retained** event. Keep the named groups; renaming is not repair.
+   Original OrderPlaced rows remain for result validation. A delivered event
+   deleted by retention cannot be recovered automatically, even with earliest
+   reset. Report unresolved pending orders for future repair tooling. No backfill,
+   inbox purge, identity regeneration, or automatic downgrade is supplied.
+
+All four toggles default true: `ORDER_EVENTS_ENABLED`, `INVENTORY_EVENTS_ENABLED`,
+`OUTBOX_ENABLED` (order relay), `INVENTORY_OUTBOX_ENABLED` (result relay).
+Relay disable stops scheduling, not transactional outbox insertion. Consumer
+disable stops intake, not HTTP acceptance. Services can cold-start with consumers
+enabled while broker DNS is absent and retry listener startup after recovery;
+HTTP health alone does not demonstrate consumer assignment or backlog progress.
+Proof-only profiles and `CONSUMER_PROOF_*` settings must never remain enabled in
+normal operation. Broker recovery must not require switching consumers off.
+
+Inspect committed offsets (the next offset to consume) and lag:
+
+```bash
+for group in commerce-inventory-order-placed-v1 commerce-order-inventory-result-v1; do
+  docker compose exec -T kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server kafka:9092 --describe --group "$group"
+done
+docker compose exec -T postgres psql -U order -d orderdb -c "SELECT id,status,version FROM orders WHERE status='PENDING_INVENTORY';"
+docker compose exec -T postgres psql -U order -d orderdb -c "SELECT event_id,order_id,created_at,attempt_count,last_error_code,delivered_at FROM order_outbox ORDER BY created_at;"
+docker compose exec -T postgres psql -U order -d orderdb -c "SELECT order_id,causation_id,result_event_id,result_type FROM order_inventory_results;"
+docker compose exec -T postgres psql -U order -d orderdb -c "SELECT consumer_name,event_id,processed_at FROM order_event_inbox;"
+docker compose exec -T inventory-postgres psql -U inventory -d inventory -c "SELECT consumer_name,event_id,processed_at FROM inventory_event_inbox;"
+docker compose exec -T inventory-postgres psql -U inventory -d inventory -c "SELECT order_id,outcome FROM inventory_reservation_attempts; SELECT sku,available_quantity FROM stock ORDER BY sku;"
+docker compose exec -T inventory-postgres psql -U inventory -d inventory -c "SELECT event_id,order_id,causation_id,event_type,attempt_count,last_error_code,lease_until,delivered_at FROM inventory_result_outbox ORDER BY created_at;"
+docker compose logs --since=10m order-service inventory-service
+curl -fsS http://localhost:8080/actuator/metrics/consumer.blocked.partitions
+curl -fsS http://localhost:8081/actuator/metrics/consumer.blocked.partitions
+```
+
+Correlate metadata-only failure code/topic/partition/offset with `consumer.applied`,
+`consumer.duplicate`, `consumer.retry`, `consumer.blocked` and
+`consumer.infrastructure.failures`. Check inventory's `outbox.*` metrics on port
+8081 as well as order's on 8080; cached snapshots are not authoritative SQL.
+A paused partition can have a healthy process and healthy sibling partitions.
+Auto-commit is disabled, record mode uses synchronous commits and max.poll.records=1.
+Transient database failures retry with nonblocking backoff (1s doubling to 30s);
+protocol/unknown failures block that partition. Assignment-generation fencing
+prevents stale retry/success callbacks acting on a new owner.
+
+Correct the diagnosed infrastructure/data cause under operator review, then
+`docker compose restart inventory-service` or `docker compose restart order-service`
+as appropriate. Verify the same failed offset is retried and only advances after
+successful processing. **Never reset/skip offsets, delete inboxes, or fabricate
+terminal state.** Unrepairable poison/unknown input and its partition followers
+remain unavailable until later DLQ/replay tooling; restart alone is not a fix.
+Other partitions continue. Existing inventory HTTP release is **unsupported on
+async-owned reservations** until compensation exists. No cancellation, late-success
+reconciliation, mixed-version rollback, broker HA, or exactly-once delivery is claimed.
 
 ### Generated API code
 
@@ -374,8 +487,9 @@ Write an ADR for meaningful decisions; smaller experiments need only a short not
 | Next milestone | What it proves |
 |---|---|
 | Phase 3B closeout | Merged at ca525d1; hosted CI succeeded |
-| Phase 4A | Outbox implementation locally verified and reviewed; hosted CI pending |
-| Phase 4B | Both services recover from duplicates, rejection, cancellation, and delayed events |
+| Phase 4A | Outbox baseline c411c8d; hosted CI passed in run 35494095946 |
+| Phase 4B slice 1 | Async completion and consumer crash recovery locally implemented; whole-branch review/hosted CI pending |
+| Later Phase 4B | Cancellation, compensation, delayed success after cancellation, DLQ and repaired replay |
 | Phase 5 | Logs, metrics, and traces explain successful and failed orders |
 | Phase 6 | A small UI and E2E test demonstrate the completed flow |
 

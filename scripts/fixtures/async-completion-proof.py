@@ -24,9 +24,15 @@ def boundary(logs, event_id):
     return f"DB_COMMIT_BOUNDARY eventId={event_id} outcome=APPLIED" in logs.splitlines()
 
 
+class OffsetRowUnavailable(AssertionError):
+    pass
+
+
 def parse_offset(output, group, topic, partition):
     rows = [line.split() for line in output.splitlines()]
     rows = [row for row in rows if len(row) >= 4 and row[:3] == [group, topic, str(partition)]]
+    if not rows:
+        raise OffsetRowUnavailable(group, topic, partition)
     assert len(rows) == 1, (group, topic, partition, rows)
     return None if rows[0][3] == "-" else int(rows[0][3])
 
@@ -135,10 +141,19 @@ def observe(row, count, deadline):
 
 
 def group_offset(service, record, deadline):
-    output = compose("exec", "-T", "kafka", "/opt/kafka/bin/kafka-consumer-groups.sh",
-                     "--bootstrap-server", "kafka:9092", "--describe", "--group", GROUPS[service],
-                     timeout=15, deadline=deadline)
-    return parse_offset(output, GROUPS[service], TOPICS[service], record["partition"])
+    unavailable = object()
+
+    def read():
+        output = compose("exec", "-T", "kafka", "/opt/kafka/bin/kafka-consumer-groups.sh",
+                         "--bootstrap-server", "kafka:9092", "--describe", "--group", GROUPS[service],
+                         timeout=15, deadline=deadline)
+        try:
+            return parse_offset(output, GROUPS[service], TOPICS[service], record["partition"])
+        except OffsetRowUnavailable:
+            return unavailable
+
+    # A rebalance may omit the row; only an observed '-' proves no committed offset.
+    return poll(read, lambda value: value is not unavailable, deadline)
 
 
 def advanced(service, record, deadline):
