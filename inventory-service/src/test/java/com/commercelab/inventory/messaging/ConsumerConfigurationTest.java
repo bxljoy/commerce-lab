@@ -16,7 +16,7 @@ import org.springframework.kafka.listener.ConsumerAwareRebalanceListener;
 import org.springframework.kafka.listener.MessageListenerContainer;
 import org.springframework.test.util.ReflectionTestUtils;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
 import org.springframework.kafka.listener.ContainerProperties;
@@ -106,8 +106,8 @@ class ConsumerConfigurationTest {
                 .containsEntry("group.id", "commerce-inventory-order-placed-v1")
                 .containsEntry("enable.auto.commit", false)
                 .containsEntry("auto.offset.reset", "earliest")
-                .containsEntry("key.deserializer", StringDeserializer.class)
-                .containsEntry("value.deserializer", StringDeserializer.class)
+                .containsEntry("key.deserializer", ByteArrayDeserializer.class)
+                .containsEntry("value.deserializer", ByteArrayDeserializer.class)
                 .containsEntry("max.poll.records", 1)
                 .containsEntry("max.poll.interval.ms", 300000)
                 .containsEntry("session.timeout.ms", 10000)

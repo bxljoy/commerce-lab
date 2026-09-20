@@ -42,7 +42,7 @@ class ConsumerListenerTest {
             var events = new EventJson();
             String body = new String(input.readAllBytes(), StandardCharsets.UTF_8);
             String key = events.content(body).path("orderId").asText();
-            var record = new ConsumerRecord<>(p0.topic(), 0, 4, key, body);
+            var record = record(p0.topic(), 0, 4, key, body);
             var listener = new InventoryResultListener(application, events, (id, outcome) -> {}, failures);
             failures.consumerLifecycle(new ConsumerStartingEvent(oldChild, oldChild));
             failures.rebalanceListener().onPartitionsAssigned(oldConsumer, List.of(p0));
@@ -68,7 +68,7 @@ class ConsumerListenerTest {
                 verifyNoInteractions(scheduler);
                 verify(newChild, never()).resumePartition(any());
             }
-            failures.handleOne(failure, new ConsumerRecord<>(p0.topic(), 0, 5, key, body), newConsumer, newChild);
+            failures.handleOne(failure, record(p0.topic(), 0, 5, key, body), newConsumer, newChild);
             verify(newConsumer, times(2)).seek(p0, 4);
             verify(newConsumer, never()).seek(p0, 5);
         } finally {
@@ -89,7 +89,7 @@ class ConsumerListenerTest {
             var json = events.content(body);
             String key = json.path("orderId").asText();
             UUID event = UUID.fromString(json.path("eventId").asText());
-            var record = new ConsumerRecord<>(ConsumerConfiguration.TOPIC, 0, 4, key, body);
+            var record = record(ConsumerConfiguration.TOPIC, 0, 4, key, body);
             var listener = new InventoryResultListener(handler, events, hook, failures);
             when(handler.handle(key, body)).thenAnswer(call -> {
                 assertThat(MDC.get("eventId")).isEqualTo(event.toString());
@@ -118,10 +118,43 @@ class ConsumerListenerTest {
         var hook = mock(ConsumerCommitHook.class);
         try (var failures = new PartitionFailureHandler(new ConsumerMetrics(new SimpleMeterRegistry()))) {
             var listener = new InventoryResultListener(handler, new EventJson(), hook, failures);
-            assertThatThrownBy(() -> listener.onRecord(new ConsumerRecord<>(ConsumerConfiguration.TOPIC, 0, 4,
+            assertThatThrownBy(() -> listener.onRecord(record(ConsumerConfiguration.TOPIC, 0, 4,
                     "private-key", "{sensitive-input"))).isInstanceOf(EventProtocolException.class);
             verifyNoInteractions(handler, hook);
             assertThat(MDC.getCopyOfContextMap()).isNullOrEmpty();
         }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"key", "value"})
+    void malformedUtf8NeverReachesTransactionOrLeaksPayload(String field) throws Exception {
+        var handler = mock(OrderResultHandler.class);
+        var hook = mock(ConsumerCommitHook.class);
+        try (var failures = new PartitionFailureHandler(new ConsumerMetrics(new SimpleMeterRegistry()));
+                var input = getClass().getResourceAsStream(
+                        "/contracts/events/inventory/v1/inventory-reserved.json")) {
+            var events = new EventJson();
+            String body = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+            String key = events.content(body).path("orderId").asText();
+            byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
+            byte[] valueBytes = body.getBytes(StandardCharsets.UTF_8);
+            byte[] target = field.equals("key") ? keyBytes : valueBytes;
+            target[target.length / 2] = (byte) 0xff;
+            var listener = new InventoryResultListener(handler, events, hook, failures);
+
+            var failure = catchThrowableOfType(() -> listener.onRecord(new ConsumerRecord<>(
+                    ConsumerConfiguration.TOPIC, 0, 4, keyBytes, valueBytes)), EventProtocolException.class);
+
+            assertThat(failure.code()).isEqualTo("INVALID_UTF8");
+            assertThat(failure).hasMessage("INVALID_UTF8").hasNoCause();
+            verifyNoInteractions(handler, hook);
+            assertThat(MDC.getCopyOfContextMap()).isNullOrEmpty();
+        }
+    }
+
+    private static ConsumerRecord<byte[], byte[]> record(
+            String topic, int partition, long offset, String key, String value) {
+        return new ConsumerRecord<>(topic, partition, offset,
+                key.getBytes(StandardCharsets.UTF_8), value.getBytes(StandardCharsets.UTF_8));
     }
 }

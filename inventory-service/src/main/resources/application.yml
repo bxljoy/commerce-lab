@@ -50,4 +50,4 @@ management:
 info:
   app:
     name: ${spring.application.name}
-    phase: "3A - inventory correctness"
+    phase: "4B - asynchronous completion"

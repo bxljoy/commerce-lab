@@ -21,6 +21,7 @@ import org.apache.kafka.common.serialization.*;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -74,16 +75,16 @@ class ConsumerOffsetIT {
     @Autowired ObjectMapper mapper;
     @Autowired MeterRegistry meters;
     @Autowired Gate hook;
-    @Autowired ConcurrentKafkaListenerContainerFactory<String, String> workflowKafkaListenerContainerFactory;
-    @Autowired org.springframework.kafka.core.ConsumerFactory<String, String> workflowConsumerFactory;
+    @Autowired ConcurrentKafkaListenerContainerFactory<byte[], byte[]> workflowKafkaListenerContainerFactory;
+    @Autowired org.springframework.kafka.core.ConsumerFactory<byte[], byte[]> workflowConsumerFactory;
     @Autowired PartitionFailureHandler failures;
     @Autowired org.springframework.context.ApplicationEventPublisher publisher;
     @Autowired org.springframework.kafka.config.KafkaListenerEndpointRegistry listeners;
     @Autowired com.commercelab.order.service.OrderService orders;
     AdminClient admin;
-    KafkaProducer<String, byte[]> producer;
-    ConcurrentMessageListenerContainer<String, String> container;
-    final List<ConcurrentMessageListenerContainer<String, String>> containers = new ArrayList<>();
+    KafkaProducer<byte[], byte[]> producer;
+    ConcurrentMessageListenerContainer<byte[], byte[]> container;
+    final List<ConcurrentMessageListenerContainer<byte[], byte[]>> containers = new ArrayList<>();
     String group;
     final TopicPartition p0 = new TopicPartition(ConsumerConfiguration.TOPIC, 0);
     final AtomicBoolean failCommit = new AtomicBoolean();
@@ -100,7 +101,7 @@ class ConsumerOffsetIT {
                 "default.api.timeout.ms", 10000, "request.timeout.ms", 5000));
         producer = new KafkaProducer<>(Map.of("bootstrap.servers", KAFKA.getBootstrapServers(),
                 "acks", "all", "max.block.ms", 10000, "delivery.timeout.ms", 15000, "request.timeout.ms", 5000),
-                new StringSerializer(), new ByteArraySerializer());
+                new ByteArraySerializer(), new ByteArraySerializer());
         group = "task5-" + UUID.randomUUID();
         // Isolate test histories without changing the production group's offset policy.
         Map<TopicPartition, OffsetSpec> latest = new HashMap<>();
@@ -185,6 +186,53 @@ class ConsumerOffsetIT {
         } finally { logger.detachAppender(logs); logs.stop(); }
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"key", "value"})
+    void malformedUtf8InsideValidRecordHasNoEffectsAndBlocksOnlyItsPartition(String field) throws Exception {
+        var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(
+                org.slf4j.Logger.ROOT_LOGGER_NAME);
+        var logs = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        logs.list = new CopyOnWriteArrayList<>();
+        logs.start();
+        logger.addAppender(logs);
+        try {
+            container = start(1, workflowKafkaListenerContainerFactory);
+            var poison = event(field.equals("value") ? "sensitive-final-review-secret-\ufffd" : "SKU-A");
+            byte[] key = poison.order().toString().getBytes(StandardCharsets.UTF_8);
+            byte[] value = poison.body().getBytes(StandardCharsets.UTF_8);
+            if (field.equals("key")) key[0] = (byte) 0xff;
+            else value = malformedUtf8(poison.body());
+            long bad = send(0, key, value);
+            var follower = event();
+            send(0, follower);
+            var healthy = event();
+            long healthyOffset = send(1, healthy);
+
+            applied(healthy);
+            committed(1, healthyOffset + 1);
+            await().atMost(Duration.ofSeconds(15)).untilAsserted(() ->
+                    assertThat(container.isPartitionPaused(p0)).isTrue());
+
+            assertThat(inbox(poison.id())).isZero();
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM order_inventory_results WHERE order_id=?",
+                    Integer.class, poison.order())).isZero();
+            assertThat(jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, poison.order()))
+                    .isEqualTo("PENDING_INVENTORY");
+            assertThat(jdbc.queryForObject("SELECT version FROM orders WHERE id=?",
+                    Long.class, poison.order())).isZero();
+            noSkip(bad, follower);
+            assertThat(logs.list).allSatisfy(log -> {
+                assertThat(log.getFormattedMessage()).doesNotContain("sensitive-final-review-secret");
+                if (log.getThrowableProxy() != null)
+                    assertThat(ch.qos.logback.classic.spi.ThrowableProxyUtil.asString(log.getThrowableProxy()))
+                            .doesNotContain("sensitive-final-review-secret");
+            });
+        } finally {
+            logger.detachAppender(logs);
+            logs.stop();
+        }
+    }
+
     @Test void blockedConsumerStopsPromptlyAndClearsChildPauseRequest() throws Exception {
         container = start(1, workflowKafkaListenerContainerFactory);
         long offset = send(0, "private-key", "{poison".getBytes(StandardCharsets.UTF_8));
@@ -254,10 +302,10 @@ class ConsumerOffsetIT {
 
     @Test void actualCommitFailedCallbackCannotSkipAndDuplicateCommitsBeforeFollower() throws Exception {
         var config = new HashMap<>(workflowConsumerFactory.getConfigurationProperties());
-        var factory = new DefaultKafkaConsumerFactory<String, String>(config);
+        var factory = new DefaultKafkaConsumerFactory<byte[], byte[]>(config);
         factory.addPostProcessor(consumer -> {
             @SuppressWarnings("unchecked")
-            Consumer<String, String> proxy = (Consumer<String, String>) Proxy.newProxyInstance(
+            Consumer<byte[], byte[]> proxy = (Consumer<byte[], byte[]>) Proxy.newProxyInstance(
                     Consumer.class.getClassLoader(), new Class<?>[] {Consumer.class}, (object, method, args) -> {
                         if (method.getName().equals("commitSync") && failCommit.compareAndSet(true, false)) {
                             commitFailures.incrementAndGet();
@@ -316,12 +364,12 @@ class ConsumerOffsetIT {
         assertThat(assigned()).isEqualTo(3);
     }
 
-    private ConcurrentMessageListenerContainer<String, String> start(int concurrency,
-            ConcurrentKafkaListenerContainerFactory<String, String> factory) {
+    private ConcurrentMessageListenerContainer<byte[], byte[]> start(int concurrency,
+            ConcurrentKafkaListenerContainerFactory<byte[], byte[]> factory) {
         var result = factory.createContainer(ConsumerConfiguration.TOPIC);
         result.setConcurrency(concurrency);
         result.getContainerProperties().setGroupId(group);
-        result.getContainerProperties().setMessageListener((MessageListener<String, String>) listener::onRecord);
+        result.getContainerProperties().setMessageListener((MessageListener<byte[], byte[]>) listener::onRecord);
         containers.add(result);
         result.start();
         return result;
@@ -331,7 +379,11 @@ class ConsumerOffsetIT {
         return send(partition, event.order().toString(), event.body().getBytes(StandardCharsets.UTF_8));
     }
     private long send(int partition, String key, byte[] value) throws Exception {
-        return producer.send(new ProducerRecord<>(p0.topic(), partition, key, value)).get(20, TimeUnit.SECONDS).offset();
+        return send(partition, key.getBytes(StandardCharsets.UTF_8), value);
+    }
+    private long send(int partition, byte[] key, byte[] value) throws Exception {
+        return producer.send(new ProducerRecord<>(p0.topic(), partition, key, value))
+                .get(20, TimeUnit.SECONDS).offset();
     }
     private long committedOffset(int partition) throws Exception {
         var offsets = admin.listConsumerGroupOffsets(group).partitionsToOffsetAndMetadata().get(10, TimeUnit.SECONDS);
@@ -378,9 +430,12 @@ class ConsumerOffsetIT {
         } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException("hook interrupted"); }
     }
     private Event event() throws Exception {
+        return event("SKU-A");
+    }
+    private Event event(String sku) throws Exception {
         UUID order = orders.placeOrder(UUID.randomUUID().toString(),
                 new com.commercelab.order.service.PlaceOrderCommand("customer", "EUR",
-                        List.of(new com.commercelab.order.service.PlaceOrderCommand.Line("SKU-A", 2,
+                        List.of(new com.commercelab.order.service.PlaceOrderCommand.Line(sku, 2,
                                 java.math.BigDecimal.ONE))), "task5").order().id();
         ObjectNode body = (ObjectNode) mapper.readTree(jdbc.queryForObject(
                 "SELECT payload FROM order_outbox WHERE order_id=?", String.class, order));
@@ -389,6 +444,24 @@ class ConsumerOffsetIT {
         body.put("eventId", event.toString());
         body.put("eventType", "InventoryReserved");
         return new Event(order, event, body.toString());
+    }
+    private static byte[] malformedUtf8(String body) {
+        byte[] valid = body.getBytes(StandardCharsets.UTF_8);
+        byte[] marker = "\ufffd".getBytes(StandardCharsets.UTF_8);
+        int index = -1;
+        for (int i = 0; i <= valid.length - marker.length; i++) {
+            if (valid[i] == marker[0] && valid[i + 1] == marker[1] && valid[i + 2] == marker[2]) {
+                index = i;
+                break;
+            }
+        }
+        assertThat(index).isNotNegative();
+        byte[] malformed = new byte[valid.length - marker.length + 1];
+        System.arraycopy(valid, 0, malformed, 0, index);
+        malformed[index] = (byte) 0xff;
+        System.arraycopy(valid, index + marker.length, malformed, index + 1,
+                valid.length - index - marker.length);
+        return malformed;
     }
     private void assertState(Event event) {
         assertThat(jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, event.order()))

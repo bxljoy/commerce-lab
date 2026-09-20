@@ -27,16 +27,18 @@ public class InventoryResultListener {
     @KafkaListener(id = "order-workflow", topics = ConsumerConfiguration.TOPIC,
             groupId = ConsumerConfiguration.GROUP, containerFactory = "workflowKafkaListenerContainerFactory",
             autoStartup = "false")
-    public void onRecord(ConsumerRecord<String, String> record) {
+    public void onRecord(ConsumerRecord<byte[], byte[]> record) {
         var assignment = failures.processingAssignment(record);
         var previous = MDC.getCopyOfContextMap();
         try {
             MDC.clear();
-            var event = events.readResult(record.key(), record.value());
+            String key = StrictUtf8Decoder.decode(record.key());
+            String value = StrictUtf8Decoder.decode(record.value());
+            var event = events.readResult(key, value);
             MDC.put("eventId", event.eventId().toString());
             MDC.put("orderId", event.orderId().toString());
             MDC.put("correlationId", event.correlationId());
-            var outcome = handler.handle(record.key(), record.value());
+            var outcome = handler.handle(key, value);
             // The injected application handler is a Spring transaction proxy: return means committed.
             hook.afterDatabaseCommit(event.eventId(), outcome);
             failures.succeeded(record, outcome, assignment);

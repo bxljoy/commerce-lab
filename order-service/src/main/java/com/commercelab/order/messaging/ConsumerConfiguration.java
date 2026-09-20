@@ -2,7 +2,7 @@ package com.commercelab.order.messaging;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -23,13 +23,13 @@ public class ConsumerConfiguration {
     public static final String GROUP = "commerce-order-inventory-result-v1";
 
     @Bean
-    ConsumerFactory<String, String> workflowConsumerFactory(KafkaProperties kafka) {
+    ConsumerFactory<byte[], byte[]> workflowConsumerFactory(KafkaProperties kafka) {
         var config = kafka.buildConsumerProperties(null);
         config.put(ConsumerConfig.GROUP_ID_CONFIG, GROUP);
         config.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
         config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
-        config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
-        config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class);
+        config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class);
         config.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 1);
         config.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, 300000);
         config.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, 10000);
@@ -38,10 +38,10 @@ public class ConsumerConfiguration {
     }
 
     @Bean
-    ConcurrentKafkaListenerContainerFactory<String, String> workflowKafkaListenerContainerFactory(
-            ConsumerFactory<String, String> workflowConsumerFactory, PartitionFailureHandler failures,
+    ConcurrentKafkaListenerContainerFactory<byte[], byte[]> workflowKafkaListenerContainerFactory(
+            ConsumerFactory<byte[], byte[]> workflowConsumerFactory, PartitionFailureHandler failures,
             ApplicationEventPublisher publisher) {
-        var factory = new ConcurrentKafkaListenerContainerFactory<String, String>();
+        var factory = new ConcurrentKafkaListenerContainerFactory<byte[], byte[]>();
         factory.setConsumerFactory(workflowConsumerFactory);
         factory.setConcurrency(3);
         factory.setCommonErrorHandler(failures);
