@@ -26,7 +26,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
-@SpringBootTest
+@SpringBootTest(properties = "inventory.outbox.enabled=false")
 @AutoConfigureMockMvc
 class InventoryReplayIT extends AbstractPostgresIntegrationTest {
     @Autowired MockMvc mvc;

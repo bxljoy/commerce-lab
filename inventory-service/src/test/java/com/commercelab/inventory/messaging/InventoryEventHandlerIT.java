@@ -39,7 +39,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.support.TransactionTemplate;
 
-@SpringBootTest(properties = {"inventory.events.enabled=false", "spring.kafka.listener.auto-startup=false"})
+@SpringBootTest(properties = {"inventory.outbox.enabled=false", "inventory.events.enabled=false",
+        "spring.kafka.listener.auto-startup=false"})
 class InventoryEventHandlerIT extends AbstractPostgresIntegrationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired InventoryEventHandler handler;

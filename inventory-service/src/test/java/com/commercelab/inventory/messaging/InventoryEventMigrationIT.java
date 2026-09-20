@@ -17,7 +17,8 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 
-@SpringBootTest(properties = {"inventory.events.enabled=false", "spring.kafka.listener.auto-startup=false"})
+@SpringBootTest(properties = {"inventory.outbox.enabled=false", "inventory.events.enabled=false",
+        "spring.kafka.listener.auto-startup=false"})
 class InventoryEventMigrationIT extends AbstractPostgresIntegrationTest {
     @Autowired DataSource dataSource;
     @Autowired JdbcTemplate jdbc;

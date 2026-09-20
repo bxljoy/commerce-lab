@@ -1,6 +1,8 @@
 spring:
   application:
     name: inventory-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
   mvc:
     problemdetails:
       enabled: true
@@ -14,6 +16,17 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+
+inventory:
+  outbox:
+    enabled: ${INVENTORY_OUTBOX_ENABLED:true}
+    poll-interval-ms: 1000
+    max-attempts-per-pass: 20
+    lease-ms: 60000
+    ack-wait-ms: 12000
+    max-block-ms: 2000
+    delivery-timeout-ms: 10000
+    request-timeout-ms: 3000
 
 server:
   port: 8081

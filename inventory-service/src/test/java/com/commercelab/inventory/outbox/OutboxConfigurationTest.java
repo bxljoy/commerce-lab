@@ -1,0 +1,122 @@
+package com.commercelab.inventory.outbox;
+
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.Mockito.*;
+import static org.awaitility.Awaitility.await;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Duration;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.kafka.core.ProducerFactory;
+import org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor;
+
+class OutboxConfigurationTest {
+    @Test void defaultEnablesSchedulingAndUsesExactBudgets() {
+        runner.run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context.getBean(ScheduledAnnotationBeanPostProcessor.class).getScheduledTasks()).hasSize(2);
+            assertThat(context.getBean(OutboxProperties.class))
+                    .isEqualTo(new OutboxProperties(1000, 20, 60000, 12000, 2000, 10000, 3000));
+        });
+    }
+
+    @Test void budgetAdditionCannotWrapPastLeaseValidation() {
+        runner.withPropertyValues("inventory.outbox.lease-ms=9223372036854775807",
+                "inventory.outbox.ack-wait-ms=9223372036854775806", "inventory.outbox.max-block-ms=2000")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    final OutboxDeliveryStore store = mock(OutboxDeliveryStore.class);
+    final ApplicationContextRunner runner = new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(KafkaAutoConfiguration.class))
+            .withUserConfiguration(OutboxConfiguration.class)
+            .withBean(OutboxDeliveryStore.class, () -> store)
+            .withBean(OutboxRetryPolicy.class, OutboxRetryPolicy::new)
+            .withBean(ObjectMapper.class, ObjectMapper::new)
+            .withBean(MeterRegistry.class, SimpleMeterRegistry::new);
+
+    @ParameterizedTest
+    @ValueSource(strings = {"max-attempts-per-pass=0", "max-attempts-per-pass=-1", "poll-interval-ms=0",
+            "lease-ms=0", "ack-wait-ms=0", "max-block-ms=0", "delivery-timeout-ms=0", "request-timeout-ms=0",
+            "lease-ms=14000", "ack-wait-ms=10000", "request-timeout-ms=10001"})
+    void rejectsUnsafeBudgets(String property) {
+        runner.withPropertyValues("inventory.outbox." + property).run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test void disabledSchedulingHasNoTasksButManualRelayAndNoOpHookRemainAvailable() {
+        runner.withPropertyValues("inventory.outbox.enabled=false").run(context -> {
+            assertThat(context).hasNotFailed().hasSingleBean(OutboxRelay.class).hasSingleBean(OutboxPublicationHook.class);
+            assertThat(context).doesNotHaveBean(ScheduledAnnotationBeanPostProcessor.class);
+            assertThatCode(() -> context.getBean(OutboxPublicationHook.class).afterAcknowledgement(null)).doesNotThrowAnyException();
+            verifyNoInteractions(store);
+        });
+    }
+
+    @Test void enabledSchedulerRegistersRelayAndSnapshotTasks() {
+        runner.withPropertyValues("inventory.outbox.enabled=true", "inventory.outbox.poll-interval-ms=60000").run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context.getBean(ScheduledAnnotationBeanPostProcessor.class).getScheduledTasks()).hasSize(2);
+        });
+    }
+
+    @Test void repeatedScrapesNeverQueryTheDatabase() {
+        when(store.stats()).thenReturn(new OutboxStats(2, 17.5, 1));
+        runner.withPropertyValues("inventory.outbox.enabled=false").run(context -> {
+            var meters = context.getBean(MeterRegistry.class);
+            for (int i = 0; i < 10; i++) {
+                meters.get("outbox.pending").gauge().value();
+                meters.get("outbox.failed.pending").gauge().value();
+                meters.get("outbox.oldest.pending.age").gauge().value();
+            }
+            verifyNoInteractions(store);
+        });
+    }
+
+    @Test void realSchedulerRefreshesCachedSnapshotWithoutScrapes() {
+        var stats = new AtomicReference<>(new OutboxStats(2, 17.5, 1));
+        when(store.stats()).thenAnswer(invocation -> stats.get());
+        when(store.claimNext(any())).thenReturn(Optional.empty());
+        runner.withPropertyValues("inventory.outbox.enabled=true", "inventory.outbox.poll-interval-ms=50").run(context -> {
+            // No gauge is read until the scheduled task has queried the store itself.
+            await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> verify(store, atLeastOnce()).stats());
+            var meters = context.getBean(MeterRegistry.class);
+            await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> {
+                assertThat(meters.get("outbox.pending").gauge().value()).isEqualTo(2);
+                assertThat(meters.get("outbox.failed.pending").gauge().value()).isEqualTo(1);
+                assertThat(meters.get("outbox.oldest.pending.age").gauge().value()).isEqualTo(17.5);
+            });
+            stats.set(new OutboxStats(0, 0, 0));
+            await().atMost(Duration.ofSeconds(3)).untilAsserted(() ->
+                    assertThat(meters.get("outbox.pending").gauge().value()).isZero());
+        });
+    }
+
+    @Test void producerSettingsAndDiagnosticGaugesUseContract() {
+        when(store.stats()).thenReturn(new OutboxStats(2, 17.5, 1));
+        runner.withPropertyValues("inventory.outbox.enabled=false").run(context -> {
+            var config = context.getBean(ProducerFactory.class).getConfigurationProperties();
+            assertThat(config).containsEntry(ProducerConfig.ACKS_CONFIG, "all")
+                    .containsEntry(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true)
+                    .containsEntry(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, 1)
+                    .containsEntry(ProducerConfig.MAX_BLOCK_MS_CONFIG, 2000L)
+                    .containsEntry(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 10000)
+                    .containsEntry(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 3000)
+                    .containsEntry(ProducerConfig.LINGER_MS_CONFIG, 0);
+            var meters = context.getBean(MeterRegistry.class);
+            context.getBean(OutboxMetrics.class).refresh();
+            assertThat(meters.get("outbox.pending").gauge().value()).isEqualTo(2);
+            assertThat(meters.get("outbox.oldest.pending.age").gauge().value()).isEqualTo(17.5);
+            assertThat(meters.get("outbox.failed.pending").gauge().value()).isEqualTo(1);
+        });
+    }
+}

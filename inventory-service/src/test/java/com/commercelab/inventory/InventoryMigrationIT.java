@@ -21,7 +21,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
 
-@SpringBootTest
+@SpringBootTest(properties = "inventory.outbox.enabled=false")
 @AutoConfigureMockMvc
 class InventoryMigrationIT {
     private static final PostgreSQLContainer<?> POSTGRES =

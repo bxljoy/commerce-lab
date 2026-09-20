@@ -17,7 +17,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MockMvc;
 
-@SpringBootTest
+@SpringBootTest(properties = "inventory.outbox.enabled=false")
 @AutoConfigureMockMvc
 class InventoryConsumerContractIT extends AbstractPostgresIntegrationTest {
     static final String ID = "11111111-1111-4111-8111-111111111111";
