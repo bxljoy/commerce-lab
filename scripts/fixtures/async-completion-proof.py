@@ -290,6 +290,19 @@ def container_identity(service, deadline):
     return {"id": container, "startedAt": inspected["State"]["StartedAt"], "restartCount": inspected["RestartCount"]}
 
 
+def wait_container_healthy(service, deadline):
+    def inspect_state():
+        container = compose("ps", "-q", service, timeout=10, deadline=deadline)
+        if not container:
+            return {}
+        return json.loads(docker("inspect", "--format", "{{json .State}}", container,
+                                 timeout=10, deadline=deadline))
+
+    return poll(inspect_state,
+                lambda state: state.get("Running") and state.get("Health", {}).get("Status") == "healthy",
+                deadline)
+
+
 def cold_http_work(deadline):
     base = runtime.order_url(deadline=deadline)
     body = {"customerId": "cold-proof", "currency": "EUR",
@@ -331,7 +344,8 @@ def recover_outage(order_id, pending, deadline):
     assert outbox.immutable(failed) == outbox.immutable(pending)
     emit("BROKER_OUTAGE_PENDING", orderId=order_id, eventId=pending["event_id"],
          attempts=failed["attempt_count"], errorCode=failed["last_error_code"], deliveredAt=None)
-    compose("start", "--wait", "--wait-timeout", "120", "kafka", deadline=deadline)
+    compose("start", "kafka", deadline=deadline)
+    wait_container_healthy("kafka", deadline)
     terminal(order_id, "CONFIRMED", deadline)
     terminal(cold_id, "CONFIRMED", deadline)
     delivered = await_event(order_id, True, deadline, delivered=True)

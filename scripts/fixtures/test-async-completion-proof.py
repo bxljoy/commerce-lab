@@ -23,6 +23,7 @@ class ProofTests(unittest.TestCase):
                 patch.object(proof, "await_event", return_value=dict(failed, delivered_at="later")), \
                 patch.object(proof, "terminal") as terminal, patch.object(proof, "check_effect"), \
                 patch.object(proof, "assert_dns_absent"), \
+                patch.object(proof, "wait_container_healthy") as wait_healthy, \
                 patch.object(proof, "container_identity", return_value={"id": "stable", "restartCount": 0}), \
                 patch.object(proof, "cold_http_work", return_value=(EVENT, pending)):
             terminal.side_effect = lambda *args: self.assertEqual(recreate.call_count, 2)
@@ -33,7 +34,8 @@ class ProofTests(unittest.TestCase):
             self.assertEqual(recreate.call_args_list[1].kwargs, {})
             self.assertEqual(recreate.call_count, 2)
             self.assertEqual(command.call_args_list[0].args[:3], ("stop", "-t", "10"))
-            self.assertEqual(command.call_args_list[1].args[0], "start")
+            self.assertEqual(command.call_args_list[1].args, ("start", "kafka"))
+            wait_healthy.assert_called_once_with("kafka", deadline)
 
     def test_all_stock_rows_are_checked_not_only_requested_sku(self):
         proof.require_stock({"SKU-APPLE": 8, "SKU-BANANA": 5}, 8)
@@ -41,6 +43,23 @@ class ProofTests(unittest.TestCase):
                       {"SKU-APPLE": 7, "SKU-BANANA": 5}):
             with self.assertRaises(AssertionError):
                 proof.require_stock(stock, 8)
+
+    def test_container_health_wait_uses_inspection_without_compose_start_wait_flags(self):
+        deadline = proof.Deadline(60, "broker health")
+        states = [
+            json.dumps({"Running": True, "Health": {"Status": "starting"}}),
+            json.dumps({"Running": True, "Health": {"Status": "healthy"}}),
+        ]
+        with patch.object(proof, "compose", return_value="container-id") as compose, \
+                patch.object(proof, "docker", side_effect=states) as inspect, \
+                patch.object(deadline, "sleep") as sleep:
+            state = proof.wait_container_healthy("kafka", deadline)
+        self.assertEqual(state["Health"]["Status"], "healthy")
+        self.assertEqual(compose.call_count, 2)
+        self.assertEqual(inspect.call_count, 2)
+        sleep.assert_called_once_with()
+        self.assertTrue(all(call.kwargs["deadline"] is deadline for call in compose.call_args_list))
+        self.assertTrue(all(call.kwargs["deadline"] is deadline for call in inspect.call_args_list))
 
     def test_final_totals_reject_extra_or_missing_business_effects(self):
         expected = {"orders": 6, "placed": 6, "orderInbox": 6, "accepted": 6,
