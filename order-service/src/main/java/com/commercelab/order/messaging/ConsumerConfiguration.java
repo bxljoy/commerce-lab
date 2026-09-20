@@ -61,6 +61,14 @@ public class ConsumerConfiguration {
     @Bean ConsumerMetrics consumerMetrics(MeterRegistry meters) { return new ConsumerMetrics(meters); }
 
     @Bean(destroyMethod = "close")
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
+            name = "order.events.enabled", havingValue = "true", matchIfMissing = true)
+    WorkflowConsumerLifecycle workflowConsumerLifecycle(
+            org.springframework.kafka.config.KafkaListenerEndpointRegistry registry) {
+        return new WorkflowConsumerLifecycle(registry, "order-workflow");
+    }
+
+    @Bean(destroyMethod = "close")
     PartitionFailureHandler partitionFailureHandler(ConsumerMetrics metrics) {
         return new PartitionFailureHandler(metrics);
     }

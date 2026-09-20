@@ -26,7 +26,7 @@ public class OrderPlacedListener {
 
     @KafkaListener(id = "inventory-workflow", topics = ConsumerConfiguration.TOPIC,
             groupId = ConsumerConfiguration.GROUP, containerFactory = "workflowKafkaListenerContainerFactory",
-            autoStartup = "${inventory.events.enabled:true}")
+            autoStartup = "false")
     public void onRecord(ConsumerRecord<String, String> record) {
         var assignment = failures.processingAssignment(record);
         var previous = MDC.getCopyOfContextMap();

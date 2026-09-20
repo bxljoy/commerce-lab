@@ -22,6 +22,21 @@ import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
 import org.springframework.kafka.listener.ContainerProperties;
 
 class ConsumerConfigurationTest {
+    @Test void enabledListenersDeferStartupAndDisabledListenersHaveNoRetryWorker() throws Exception {
+        var annotation = OrderPlacedListener.class.getMethod("onRecord", ConsumerRecord.class)
+                .getAnnotation(org.springframework.kafka.annotation.KafkaListener.class);
+        assertThat(annotation.autoStartup()).isEqualTo("false");
+        var runner = new org.springframework.boot.test.context.runner.ApplicationContextRunner()
+                .withUserConfiguration(ConsumerConfiguration.class)
+                .withBean(io.micrometer.core.instrument.MeterRegistry.class, SimpleMeterRegistry::new);
+        runner.run(context -> {
+            assertThat(context).hasNotFailed().hasSingleBean(WorkflowConsumerLifecycle.class);
+            assertThat(context.getBean(WorkflowConsumerLifecycle.class).isRunning()).isFalse();
+        });
+        runner.withPropertyValues("inventory.events.enabled=false").run(context ->
+                assertThat(context).hasNotFailed().doesNotHaveBean(WorkflowConsumerLifecycle.class));
+    }
+
     @Test void overlappingMembershipBindsActualPublishingChildBeforeApplicationDispatch() {
         var config = new ConsumerConfiguration();
         var scheduler = mock(ScheduledExecutorService.class);

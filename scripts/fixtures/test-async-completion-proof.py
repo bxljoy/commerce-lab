@@ -12,7 +12,7 @@ EVENT = "12345678-1234-4234-8234-123456789012"
 
 
 class ProofTests(unittest.TestCase):
-    def test_outage_restarts_publisher_without_intake_until_broker_returns(self):
+    def test_outage_cold_starts_both_enabled_services_and_never_restarts_for_recovery(self):
         pending = {"event_id": EVENT, "order_id": EVENT, "event_type": "InventoryReserved",
                    "schema_version": 1, "topic": "commerce.inventory.v1", "message_key": EVENT,
                    "payload": "{}", "created_at": "now", "delivered_at": None, "attempt_count": 0}
@@ -21,12 +21,17 @@ class ProofTests(unittest.TestCase):
         with patch.object(proof, "compose") as command, patch.object(proof, "recreate") as recreate, \
                 patch.object(proof, "event_row", return_value=failed), \
                 patch.object(proof, "await_event", return_value=dict(failed, delivered_at="later")), \
-                patch.object(proof, "terminal") as terminal, patch.object(proof, "check_effect"):
-            terminal.side_effect = lambda *args: self.assertEqual(recreate.call_count, 1)
+                patch.object(proof, "terminal") as terminal, patch.object(proof, "check_effect"), \
+                patch.object(proof, "assert_dns_absent"), \
+                patch.object(proof, "container_identity", return_value={"id": "stable", "restartCount": 0}), \
+                patch.object(proof, "cold_http_work", return_value=(EVENT, pending)):
+            terminal.side_effect = lambda *args: self.assertEqual(recreate.call_count, 2)
             proof.recover_outage(EVENT, pending, deadline)
             self.assertEqual(recreate.call_args_list[0].args, ("inventory", deadline))
-            self.assertEqual(recreate.call_args_list[0].kwargs, {"enabled": False, "publisher": True})
+            self.assertEqual(recreate.call_args_list[0].kwargs, {})
+            self.assertEqual(recreate.call_args_list[1].args, ("order", deadline))
             self.assertEqual(recreate.call_args_list[1].kwargs, {})
+            self.assertEqual(recreate.call_count, 2)
             self.assertEqual(command.call_args_list[0].args[:3], ("stop", "-t", "10"))
             self.assertEqual(command.call_args_list[1].args[0], "start")
 
@@ -38,8 +43,8 @@ class ProofTests(unittest.TestCase):
                 proof.require_stock(stock, 8)
 
     def test_final_totals_reject_extra_or_missing_business_effects(self):
-        expected = {"orders": 5, "placed": 5, "orderInbox": 5, "accepted": 5,
-                    "inventoryInbox": 5, "attempts": 5, "reservations": 4, "lines": 4, "results": 5}
+        expected = {"orders": 6, "placed": 6, "orderInbox": 6, "accepted": 6,
+                    "inventoryInbox": 6, "attempts": 7, "reservations": 6, "lines": 6, "results": 6}
         proof.require_totals(expected)
         for key in expected:
             with self.assertRaises(AssertionError):

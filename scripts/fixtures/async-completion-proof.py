@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import subprocess
 from pathlib import Path
 import uuid
 
@@ -42,8 +43,8 @@ def require_killed(state):
 
 
 def require_totals(counts):
-    assert counts == {"orders": 5, "placed": 5, "orderInbox": 5, "accepted": 5,
-                      "inventoryInbox": 5, "attempts": 5, "reservations": 4, "lines": 4, "results": 5}, counts
+    assert counts == {"orders": 6, "placed": 6, "orderInbox": 6, "accepted": 6,
+                      "inventoryInbox": 6, "attempts": 7, "reservations": 6, "lines": 6, "results": 6}, counts
 
 
 def require_stock(stock, apple):
@@ -251,11 +252,64 @@ def crash(service, order_id, row, deadline, apple):
     assert outbox.immutable(await_event(order_id, True, deadline)) == outbox.immutable(result)
 
 
+def assert_dns_absent(service, deadline):
+    try:
+        compose("exec", "-T", service + "-service", "getent", "hosts", "kafka", timeout=10, deadline=deadline)
+    except subprocess.CalledProcessError as failure:
+        assert failure.returncode == 2, failure.returncode
+    else:
+        raise AssertionError("Stopped broker still has DNS")
+    output = poll(lambda: logs(service, deadline), lambda text: "startup=retry" in text, deadline)
+    for line in output.splitlines():
+        if "startup=retry" in line:
+            print("COLD_START_LOG " + line, flush=True)
+    emit("DNS_ABSENT", service=service, hostname="kafka", getentExit=2)
+
+
+def container_identity(service, deadline):
+    container = compose("ps", "-q", service + "-service", timeout=10, deadline=deadline)
+    inspected = json.loads(docker("inspect", "--format", "{{json .}}", container, timeout=10, deadline=deadline))
+    require_normal(inspected["Config"]["Env"])
+    assert service.upper() + "_EVENTS_ENABLED=true" in inspected["Config"]["Env"]
+    assert inspected["State"]["Running"] and inspected["RestartCount"] == 0
+    return {"id": container, "startedAt": inspected["State"]["StartedAt"], "restartCount": inspected["RestartCount"]}
+
+
+def cold_http_work(deadline):
+    base = runtime.order_url(deadline=deadline)
+    body = {"customerId": "cold-proof", "currency": "EUR",
+            "lines": [{"sku": "SKU-APPLE", "quantity": 1, "unitPrice": 1}]}
+    created, _ = runtime.request(base, "/api/v1/orders", 202, "POST", body, str(uuid.uuid4()), deadline=deadline)
+    placed = await_event(created["id"], False, deadline)
+    assert placed["delivered_at"] is None
+    runtime.order(base, created["id"], "PENDING_INVENTORY", deadline=deadline)
+    emit("COLD_HTTP_COMMIT", service="order", orderId=created["id"], eventId=placed["event_id"], status=202)
+
+    inventory = "http://" + compose("port", "inventory-service", "8081", timeout=10, deadline=deadline)
+    reservation_id = str(uuid.uuid4())
+    # Independent HTTP reservation, not a release of an async-workflow-owned order.
+    reservation = {"orderId": reservation_id, "lines": [{"sku": "SKU-BANANA", "quantity": 1}]}
+    runtime.request(inventory, "/api/v1/reservations", 201, "POST", reservation, deadline=deadline)
+    stock, _ = runtime.request(inventory, "/api/v1/stock/SKU-BANANA", 200, deadline=deadline)
+    assert stock["availableQuantity"] == 4
+    runtime.request(inventory, "/api/v1/reservations/" + reservation_id + "/release", 200, "PUT", deadline=deadline)
+    check_stock(5, deadline)
+    assert sql(f"SELECT status FROM inventory_reservations WHERE order_id='{reservation_id}'",
+               inventory=True, deadline=deadline) == "RELEASED"
+    emit("COLD_HTTP_COMMIT", service="inventory", reservationId=reservation_id, reserveStatus=201,
+         releaseStatus=200, bananaAfterReserve=4, bananaAfterRelease=5)
+    return created["id"], placed
+
+
 def recover_outage(order_id, pending, deadline):
     compose("stop", "-t", "10", "kafka", timeout=25, deadline=deadline)
-    # Docker removes stopped-broker DNS. Isolate publication of the already-committed
-    # result from cold consumer construction, which requires resolvable bootstrap DNS.
-    recreate("inventory", deadline, enabled=False, publisher=True)
+    recreate("inventory", deadline)
+    recreate("order", deadline)
+    identities = {}
+    for service in ("inventory", "order"):
+        assert_dns_absent(service, deadline)
+        identities[service] = container_identity(service, deadline)
+    cold_id, placed = cold_http_work(deadline)
     failed = poll(lambda: event_row(order_id, True, deadline),
                   lambda row: row["last_error_code"] is not None, deadline)
     assert failed["delivered_at"] is None and failed["attempt_count"] >= 1
@@ -264,10 +318,15 @@ def recover_outage(order_id, pending, deadline):
          attempts=failed["attempt_count"], errorCode=failed["last_error_code"], deliveredAt=None)
     compose("start", "--wait", "--wait-timeout", "120", "kafka", deadline=deadline)
     terminal(order_id, "CONFIRMED", deadline)
+    terminal(cold_id, "CONFIRMED", deadline)
     delivered = await_event(order_id, True, deadline, delivered=True)
     assert outbox.immutable(delivered) == outbox.immutable(pending)
-    recreate("inventory", deadline)
-    check_effect(order_id, 5, "CONFIRMED", deadline)
+    assert outbox.immutable(await_event(cold_id, False, deadline, delivered=True)) == outbox.immutable(placed)
+    check_effect(order_id, 4, "CONFIRMED", deadline)
+    check_effect(cold_id, 4, "CONFIRMED", deadline)
+    for service in ("inventory", "order"):
+        assert container_identity(service, deadline) == identities[service]
+        emit("COLD_RECOVERY_NO_RESTART", service=service, eventsEnabled=True, **identities[service])
 
 
 def main():
@@ -333,8 +392,8 @@ def main():
     emit("EXACT_TOTALS", **counts)
     for service in ("inventory", "order"):
         assert "DB_COMMIT_BOUNDARY" not in logs(service, deadline)
-    emit("PASS", orders=5, confirmed=4, rejected=1, appleBefore=10, appleAfter=5,
-         realConsumerSigkills=2, freshGroupRetainedIntake=True,
+    emit("PASS", orders=6, confirmed=5, rejected=1, appleBefore=10, appleAfter=4,
+         realConsumerSigkills=2, freshGroupRetainedIntake=True, enabledColdDnsRecovery=True,
          limitation="Retention-expired delivered events are not recovered or regenerated")
 
 
