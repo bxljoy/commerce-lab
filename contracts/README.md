@@ -92,9 +92,10 @@ The result envelope contains `eventId`, `eventType`, integer `schemaVersion: 1`,
 `occurredAt`, `orderId`, `correlationId`, `causationId` and ordered `lines`.
 The causation ID is the original OrderPlaced event ID, not the result's ID.
 IDs/timestamp/key/payload are generated once and persisted unchanged for retries;
-new results emit UTC timestamps. Customer data, prices, HTTP request keys and
-exception text are excluded. Shared UUID values accept full-width hex in either
-case; incoming timestamps accept valid RFC3339 offsets, while keys remain canonical.
+new inventory results emit UTC timestamps. Customer data, prices, HTTP request
+keys and exception text are excluded. Shared UUID values accept full-width hex in
+either case. Incoming `OrderPlaced.occurredAt` accepts valid RFC3339 offsets;
+inventory-result `occurredAt` must be UTC (`Z` or `+00:00`). Keys remain canonical.
 
 Reserved results have no reason/shortages. Rejected results require
 `reasonCode: INSUFFICIENT_STOCK` and nonempty `shortages`: each distinct SKU must
